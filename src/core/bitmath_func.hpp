@@ -321,6 +321,20 @@ static inline T ROR(const T x, const uint8 n)
 }
 
 /**
+ * Swap odd and even bits in a variable.
+ *
+ * Bit 0 is swapped with bit 1, bit 2 with bit 3 and so on.
+ *
+ * @param x The value in which we want to swap bits
+ * @return The bit swapped value
+ */
+template <typename T>
+static inline T SwapOddEvenBits(T x)
+{
+	return (T)(((x >> 1) & (T)0x5555555555555555LL) | ((x & (T)0x5555555555555555LL) << 1));
+}
+
+/**
  * Do an operation for each set bit in a value.
  *
  * This macros is used to do an operation for each set

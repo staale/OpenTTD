@@ -22,7 +22,8 @@ void MarkBridgeDirty(TileIndex tile);
  * @param end   The end of the tunnel or bridge.
  * @return length of bridge/tunnel middle
  */
-static inline uint GetTunnelBridgeLength(TileIndex begin, TileIndex end)
+template <typename Tindex>
+static inline uint GetTunnelBridgeLength(const Tindex &begin, Tindex end)
 {
 	int x1 = TileX(begin);
 	int y1 = TileY(begin);

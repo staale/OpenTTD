@@ -19,9 +19,10 @@
  * @param tile the bridge tile to find the bridge ramp for
  * @param dir  the direction to search in
  */
-static TileIndex GetBridgeEnd(TileIndex tile, DiagDirection dir)
+template <typename Tindex>
+static Tindex GetBridgeEnd(Tindex tile, DiagDirection dir)
 {
-	TileIndexDiff delta = TileOffsByDiagDir(dir);
+	TileIndexDiff delta = TileOffsByDiagDir(dir, MapOf(tile));
 
 	dir = ReverseDiagDir(dir);
 	do {
@@ -56,10 +57,23 @@ TileIndex GetSouthernBridgeEnd(TileIndex t)
  * Starting at one bridge end finds the other bridge end
  * @param tile the bridge ramp tile to find the other bridge ramp for
  */
-TileIndex GetOtherBridgeEnd(TileIndex tile)
+template <typename Tindex>
+static inline Tindex GetOtherBridgeEnd(const Tindex &tile)
 {
 	assert(IsBridgeTile(tile));
 	return GetBridgeEnd(tile, GetTunnelBridgeDirection(tile));
+}
+
+/** @copydoc GetOtherBridgeEnd(const Tindex&) */
+TileIndex GetOtherBridgeEnd(TileIndex tile)
+{
+	return GetOtherBridgeEnd<TileIndex>(tile);
+}
+
+/** @copydoc GetOtherBridgeEnd(const Tindex&) */
+GenericTileIndex GetOtherBridgeEnd(GenericTileIndex tile)
+{
+	return GetOtherBridgeEnd<GenericTileIndex>(tile);
 }
 
 /**
@@ -67,7 +81,8 @@ TileIndex GetOtherBridgeEnd(TileIndex tile)
  * @param t the bridge ramp tile to get the bridge height from
  * @return the height of the bridge.
  */
-int GetBridgeHeight(TileIndex t)
+template <typename Tindex>
+static inline int GetBridgeHeight(const Tindex &t)
 {
 	int h;
 	Slope tileh = GetTileSlope(t, &h);
@@ -75,4 +90,16 @@ int GetBridgeHeight(TileIndex t)
 
 	/* one height level extra for the ramp */
 	return h + 1 + ApplyFoundationToSlope(f, &tileh);
+}
+
+/** @copydoc GetBridgeHeight(const Tindex&) */
+int GetBridgeHeight(TileIndex t)
+{
+	return GetBridgeHeight<TileIndex>(t);
+}
+
+/** @copydoc GetBridgeHeight(const Tindex&) */
+int GetBridgeHeight(GenericTileIndex t)
+{
+	return GetBridgeHeight<GenericTileIndex>(t);
 }

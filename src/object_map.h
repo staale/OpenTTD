@@ -44,10 +44,11 @@ static inline bool IsObjectTypeTile(TileIndex t, ObjectType type)
  * @pre IsTileType(t, MP_OBJECT)
  * @return The ObjectID of the object.
  */
-static inline ObjectID GetObjectIndex(TileIndex t)
+template <typename Tindex>
+static inline ObjectID GetObjectIndex(const Tindex &t)
 {
 	assert(IsTileType(t, MP_OBJECT));
-	return _m[t].m2 | _m[t].m5 << 16;
+	return GetTile(t)->m2 | GetTile(t)->m5 << 16;
 }
 
 /**
@@ -56,10 +57,11 @@ static inline ObjectID GetObjectIndex(TileIndex t)
  * @pre IsTileType(t, MP_OBJECT)
  * @return The random bits.
  */
-static inline byte GetObjectRandomBits(TileIndex t)
+template <typename Tindex>
+static inline byte GetObjectRandomBits(const Tindex &t)
 {
 	assert(IsTileType(t, MP_OBJECT));
-	return _m[t].m3;
+	return GetTile(t)->m3;
 }
 
 
@@ -71,17 +73,18 @@ static inline byte GetObjectRandomBits(TileIndex t)
  * @param wc     Water class for this object.
  * @param random Random data to store on the tile
  */
-static inline void MakeObject(TileIndex t, Owner o, ObjectID index, WaterClass wc, byte random)
+template <typename Tindex>
+static inline void MakeObject(const Tindex &t, Owner o, ObjectID index, WaterClass wc, byte random)
 {
 	SetTileType(t, MP_OBJECT);
 	SetTileOwner(t, o);
 	SetWaterClass(t, wc);
-	_m[t].m2 = index;
-	_m[t].m3 = random;
-	_m[t].m4 = 0;
-	_m[t].m5 = index >> 16;
-	SB(_me[t].m6, 2, 4, 0);
-	_me[t].m7 = 0;
+	GetTile(t)->m2 = index;
+	GetTile(t)->m3 = random;
+	GetTile(t)->m4 = 0;
+	GetTile(t)->m5 = index >> 16;
+	SB(GetTileEx(t)->m6, 2, 4, 0);
+	GetTileEx(t)->m7 = 0;
 }
 
 #endif /* OBJECT_MAP_H */

@@ -509,6 +509,26 @@ void AnimateNewHouseConstruction(TileIndex tile)
 	}
 }
 
+/**
+ * Check if GRF allows a given house to be constructed (callback 17)
+ * @param house_id house type
+ * @param tile tile where the house is about to be placed
+ * @param t town in which we are building
+ * @param random_bits feature random bits for the house
+ * @return false if callback 17 disallows construction, true in other cases
+ */
+bool HouseAllowsConstruction(HouseID house_id, TileIndex tile, Town *t, byte random_bits)
+{
+	const HouseSpec *hs = HouseSpec::Get(house_id);
+	if (HasBit(hs->callback_mask, CBM_HOUSE_ALLOW_CONSTRUCTION)) {
+		uint16 callback_res = GetHouseCallback(CBID_HOUSE_ALLOW_CONSTRUCTION, 0, 0, house_id, t, tile, true, random_bits);
+		if (callback_res != CALLBACK_FAILED && !Convert8bitBooleanCallback(hs->grf_prop.grffile, CBID_HOUSE_ALLOW_CONSTRUCTION, callback_res)) {
+			return false;
+		}
+	}
+	return true;
+}
+
 bool CanDeleteHouse(TileIndex tile)
 {
 	const HouseSpec *hs = HouseSpec::Get(GetHouseType(tile));

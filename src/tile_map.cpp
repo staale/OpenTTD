@@ -56,7 +56,8 @@ static Slope GetTileSlopeGivenHeight(int hnorth, int hwest, int heast, int hsout
  * @param h    If not \c nullptr, pointer to storage of z height
  * @return Slope of the tile, except for the HALFTILE part
  */
-Slope GetTileSlope(TileIndex tile, int *h)
+template <typename Tindex>
+static inline Slope GetTileSlope(const Tindex &tile, int *h)
 {
 	uint x1 = TileX(tile);
 	uint y1 = TileY(tile);
@@ -69,6 +70,18 @@ Slope GetTileSlope(TileIndex tile, int *h)
 	int hsouth = TileHeight(TileXY(x2, y2)); // Height of the South corner.
 
 	return GetTileSlopeGivenHeight(hnorth, hwest, heast, hsouth, h);
+}
+
+/** @copydoc GetTileSlope(const Tindex&,int) */
+Slope GetTileSlope(TileIndex tile, int *h)
+{
+	return GetTileSlope<TileIndex>(tile, h);
+}
+
+/** @copydoc GetTileSlope(const Tindex&,int) */
+Slope GetTileSlope(GenericTileIndex tile, int *h)
+{
+	return GetTileSlope<GenericTileIndex>(tile, h);
 }
 
 /**
@@ -118,7 +131,8 @@ bool IsTileFlat(TileIndex tile, int *h)
  * @param tile Tile to compute height of
  * @return Minimum height of the tile
  */
-int GetTileZ(TileIndex tile)
+template <typename Tindex>
+static inline int GetTileZ(const Tindex &tile)
 {
 	uint x1 = TileX(tile);
 	uint y1 = TileY(tile);
@@ -133,12 +147,25 @@ int GetTileZ(TileIndex tile)
 	return h;
 }
 
+/** @copydoc GetTileZ(const Tindex&) */
+int GetTileZ(TileIndex tile)
+{
+	return GetTileZ<TileIndex>(tile);
+}
+
+/** @copydoc GetTileZ(const Tindex&,int) */
+int GetTileZ(GenericTileIndex tile)
+{
+	return GetTileZ<GenericTileIndex>(tile);
+}
+
 /**
  * Get top height of the tile inside the map.
  * @param t Tile to compute height of
  * @return Maximum height of the tile
  */
-int GetTileMaxZ(TileIndex t)
+template <typename Tindex>
+static inline int GetTileMaxZ(const Tindex &t)
 {
 	uint x1 = TileX(t);
 	uint y1 = TileY(t);
@@ -151,4 +178,35 @@ int GetTileMaxZ(TileIndex t)
 	h = max<int>(h, TileHeight(TileXY(x2, y2))); // S corner
 
 	return h;
+}
+
+/** @copydoc GetTileMaxZ(const Tindex&) */
+int GetTileMaxZ(TileIndex tile)
+{
+	return GetTileMaxZ<TileIndex>(tile);
+}
+
+/** @copydoc GetTileMaxZ(const Tindex&,int) */
+int GetTileMaxZ(GenericTileIndex tile)
+{
+	return GetTileMaxZ<GenericTileIndex>(tile);
+}
+
+/**
+ * Get top height of the tile outside the map.
+ *
+ * @see Detailed description in header.
+ *
+ * @param x X-coordinate of the tile outside to compute height of.
+ * @param y Y-coordinate of the tile outside to compute height of.
+ * @return Maximum height of the tile.
+ */
+int GetTileMaxPixelZOutsideMap(int x, int y)
+{
+	uint h =   TileHeightOutsideMap(x,     y);
+	h = max(h, TileHeightOutsideMap(x + 1, y));
+	h = max(h, TileHeightOutsideMap(x,     y + 1));
+	h = max(h, TileHeightOutsideMap(x + 1, y + 1));
+
+	return h * TILE_HEIGHT;
 }

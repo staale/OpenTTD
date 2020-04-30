@@ -985,8 +985,9 @@ static CallBackFunction ToolbarForestClick(Window *w)
 {
 	DropDownList list;
 	list.emplace_back(new DropDownListIconItem(SPR_IMG_LANDSCAPING, PAL_NONE, STR_LANDSCAPING_MENU_LANDSCAPING, 0, false));
-	list.emplace_back(new DropDownListIconItem(SPR_IMG_PLANTTREES, PAL_NONE, STR_LANDSCAPING_MENU_PLANT_TREES, 1, false));
-	list.emplace_back(new DropDownListIconItem(SPR_IMG_SIGN, PAL_NONE, STR_LANDSCAPING_MENU_PLACE_SIGN, 2, false));
+	list.emplace_back(new DropDownListIconItem(SPR_IMG_CLIPBOARD, PAL_NONE, STR_LANDSCAPING_MENU_CLIPBOARD, 1, false));
+	list.emplace_back(new DropDownListIconItem(SPR_IMG_PLANTTREES, PAL_NONE, STR_LANDSCAPING_MENU_PLANT_TREES, 2, false));
+	list.emplace_back(new DropDownListIconItem(SPR_IMG_SIGN, PAL_NONE, STR_LANDSCAPING_MENU_PLACE_SIGN, 3, false));
 	ShowDropDownList(w, std::move(list), 0, WID_TN_LANDSCAPE, 100, true, true);
 	if (_settings_client.sound.click_beep) SndPlayFx(SND_15_BEEP);
 	return CBF_NONE;
@@ -1002,8 +1003,9 @@ static CallBackFunction MenuClickForest(int index)
 {
 	switch (index) {
 		case 0: ShowTerraformToolbar();  break;
-		case 1: ShowBuildTreesToolbar(); break;
-		case 2: return SelectSignTool();
+		case 1: ShowClipboardToolbar();  break;
+		case 2: ShowBuildTreesToolbar(); break;
+		case 3: return SelectSignTool();
 	}
 	return CBF_NONE;
 }

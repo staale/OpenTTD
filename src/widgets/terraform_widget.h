@@ -17,6 +17,7 @@ enum TerraformToolbarWidgets {
 	WID_TT_LOWER_LAND = WID_TT_BUTTONS_START, ///< Lower land button.
 	WID_TT_RAISE_LAND,                        ///< Raise land button.
 	WID_TT_LEVEL_LAND,                        ///< Level land button.
+	WID_TT_CLIPBOARD,                         ///< Button to open the clipboard toolbar
 	WID_TT_DEMOLISH,                          ///< Demolish aka dynamite button.
 	WID_TT_BUY_LAND,                          ///< Buy land button.
 	WID_TT_PLANT_TREES,                       ///< Plant trees button (note: opens separate window, no place-push-button).
@@ -37,6 +38,7 @@ enum EditorTerraformToolbarWidgets {
 	WID_ETT_PLACE_ROCKS,                         ///< Place rocks button.
 	WID_ETT_PLACE_DESERT,                        ///< Place desert button (in tropical climate).
 	WID_ETT_PLACE_OBJECT,                        ///< Place transmitter button.
+	WID_ETT_CLIPBOARD,                           ///< Button to open the clipboard toolbar.
 	WID_ETT_BUTTONS_END,                         ///< End of pushable buttons.
 	WID_ETT_INCREASE_SIZE = WID_ETT_BUTTONS_END, ///< Upwards arrow button to increase terraforming size.
 	WID_ETT_DECREASE_SIZE,                       ///< Downwards arrow button to decrease terraforming size.

@@ -2821,6 +2821,7 @@ enum MouseClick {
 	MAX_OFFSET_HOVER = 5,            ///< Maximum mouse movement before stopping a hover event.
 };
 extern EventState VpHandlePlaceSizingDrag();
+extern EventState VpHandleMouseWheel(int mousewheel);
 
 static void ScrollMainViewport(int x, int y)
 {

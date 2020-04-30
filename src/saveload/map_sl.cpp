@@ -55,7 +55,7 @@ static void Load_MAPT()
 
 	for (TileIndex i = 0; i != size;) {
 		SlArray(buf.data(), MAP_SL_BUF_SIZE, SLE_UINT8);
-		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) _m[i++].type = buf[j];
+		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) _main_map.m[i++].type = buf[j];
 	}
 }
 
@@ -66,7 +66,7 @@ static void Save_MAPT()
 
 	SlSetLength(size);
 	for (TileIndex i = 0; i != size;) {
-		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) buf[j] = _m[i++].type;
+		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) buf[j] = _main_map.m[i++].type;
 		SlArray(buf.data(), MAP_SL_BUF_SIZE, SLE_UINT8);
 	}
 }
@@ -78,7 +78,7 @@ static void Load_MAPH()
 
 	for (TileIndex i = 0; i != size;) {
 		SlArray(buf.data(), MAP_SL_BUF_SIZE, SLE_UINT8);
-		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) _m[i++].height = buf[j];
+		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) _main_map.m[i++].height = buf[j];
 	}
 }
 
@@ -89,7 +89,7 @@ static void Save_MAPH()
 
 	SlSetLength(size);
 	for (TileIndex i = 0; i != size;) {
-		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) buf[j] = _m[i++].height;
+		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) buf[j] = _main_map.m[i++].height;
 		SlArray(buf.data(), MAP_SL_BUF_SIZE, SLE_UINT8);
 	}
 }
@@ -101,7 +101,7 @@ static void Load_MAP1()
 
 	for (TileIndex i = 0; i != size;) {
 		SlArray(buf.data(), MAP_SL_BUF_SIZE, SLE_UINT8);
-		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) _m[i++].m1 = buf[j];
+		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) _main_map.m[i++].m1 = buf[j];
 	}
 }
 
@@ -112,7 +112,7 @@ static void Save_MAP1()
 
 	SlSetLength(size);
 	for (TileIndex i = 0; i != size;) {
-		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) buf[j] = _m[i++].m1;
+		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) buf[j] = _main_map.m[i++].m1;
 		SlArray(buf.data(), MAP_SL_BUF_SIZE, SLE_UINT8);
 	}
 }
@@ -127,7 +127,7 @@ static void Load_MAP2()
 			/* In those versions the m2 was 8 bits */
 			IsSavegameVersionBefore(SLV_5) ? SLE_FILE_U8 | SLE_VAR_U16 : SLE_UINT16
 		);
-		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) _m[i++].m2 = buf[j];
+		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) _main_map.m[i++].m2 = buf[j];
 	}
 }
 
@@ -138,7 +138,7 @@ static void Save_MAP2()
 
 	SlSetLength(size * sizeof(uint16));
 	for (TileIndex i = 0; i != size;) {
-		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) buf[j] = _m[i++].m2;
+		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) buf[j] = _main_map.m[i++].m2;
 		SlArray(buf.data(), MAP_SL_BUF_SIZE, SLE_UINT16);
 	}
 }
@@ -150,7 +150,7 @@ static void Load_MAP3()
 
 	for (TileIndex i = 0; i != size;) {
 		SlArray(buf.data(), MAP_SL_BUF_SIZE, SLE_UINT8);
-		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) _m[i++].m3 = buf[j];
+		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) _main_map.m[i++].m3 = buf[j];
 	}
 }
 
@@ -161,7 +161,7 @@ static void Save_MAP3()
 
 	SlSetLength(size);
 	for (TileIndex i = 0; i != size;) {
-		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) buf[j] = _m[i++].m3;
+		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) buf[j] = _main_map.m[i++].m3;
 		SlArray(buf.data(), MAP_SL_BUF_SIZE, SLE_UINT8);
 	}
 }
@@ -173,7 +173,7 @@ static void Load_MAP4()
 
 	for (TileIndex i = 0; i != size;) {
 		SlArray(buf.data(), MAP_SL_BUF_SIZE, SLE_UINT8);
-		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) _m[i++].m4 = buf[j];
+		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) _main_map.m[i++].m4 = buf[j];
 	}
 }
 
@@ -184,7 +184,7 @@ static void Save_MAP4()
 
 	SlSetLength(size);
 	for (TileIndex i = 0; i != size;) {
-		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) buf[j] = _m[i++].m4;
+		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) buf[j] = _main_map.m[i++].m4;
 		SlArray(buf.data(), MAP_SL_BUF_SIZE, SLE_UINT8);
 	}
 }
@@ -196,7 +196,7 @@ static void Load_MAP5()
 
 	for (TileIndex i = 0; i != size;) {
 		SlArray(buf.data(), MAP_SL_BUF_SIZE, SLE_UINT8);
-		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) _m[i++].m5 = buf[j];
+		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) _main_map.m[i++].m5 = buf[j];
 	}
 }
 
@@ -207,7 +207,7 @@ static void Save_MAP5()
 
 	SlSetLength(size);
 	for (TileIndex i = 0; i != size;) {
-		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) buf[j] = _m[i++].m5;
+		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) buf[j] = _main_map.m[i++].m5;
 		SlArray(buf.data(), MAP_SL_BUF_SIZE, SLE_UINT8);
 	}
 }
@@ -222,16 +222,16 @@ static void Load_MAP6()
 			/* 1024, otherwise we overflow on 64x64 maps! */
 			SlArray(buf.data(), 1024, SLE_UINT8);
 			for (uint j = 0; j != 1024; j++) {
-				_me[i++].m6 = GB(buf[j], 0, 2);
-				_me[i++].m6 = GB(buf[j], 2, 2);
-				_me[i++].m6 = GB(buf[j], 4, 2);
-				_me[i++].m6 = GB(buf[j], 6, 2);
+				_main_map.me[i++].m6 = GB(buf[j], 0, 2);
+				_main_map.me[i++].m6 = GB(buf[j], 2, 2);
+				_main_map.me[i++].m6 = GB(buf[j], 4, 2);
+				_main_map.me[i++].m6 = GB(buf[j], 6, 2);
 			}
 		}
 	} else {
 		for (TileIndex i = 0; i != size;) {
 			SlArray(buf.data(), MAP_SL_BUF_SIZE, SLE_UINT8);
-			for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) _me[i++].m6 = buf[j];
+			for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) _main_map.me[i++].m6 = buf[j];
 		}
 	}
 }
@@ -243,7 +243,7 @@ static void Save_MAP6()
 
 	SlSetLength(size);
 	for (TileIndex i = 0; i != size;) {
-		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) buf[j] = _me[i++].m6;
+		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) buf[j] = _main_map.me[i++].m6;
 		SlArray(buf.data(), MAP_SL_BUF_SIZE, SLE_UINT8);
 	}
 }
@@ -255,7 +255,7 @@ static void Load_MAP7()
 
 	for (TileIndex i = 0; i != size;) {
 		SlArray(buf.data(), MAP_SL_BUF_SIZE, SLE_UINT8);
-		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) _me[i++].m7 = buf[j];
+		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) _main_map.me[i++].m7 = buf[j];
 	}
 }
 
@@ -266,7 +266,7 @@ static void Save_MAP7()
 
 	SlSetLength(size);
 	for (TileIndex i = 0; i != size;) {
-		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) buf[j] = _me[i++].m7;
+		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) buf[j] = _main_map.me[i++].m7;
 		SlArray(buf.data(), MAP_SL_BUF_SIZE, SLE_UINT8);
 	}
 }
@@ -278,7 +278,7 @@ static void Load_MAP8()
 
 	for (TileIndex i = 0; i != size;) {
 		SlArray(buf.data(), MAP_SL_BUF_SIZE, SLE_UINT16);
-		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) _me[i++].m8 = buf[j];
+		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) _main_map.me[i++].m8 = buf[j];
 	}
 }
 
@@ -289,7 +289,7 @@ static void Save_MAP8()
 
 	SlSetLength(size * sizeof(uint16));
 	for (TileIndex i = 0; i != size;) {
-		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) buf[j] = _me[i++].m8;
+		for (uint j = 0; j != MAP_SL_BUF_SIZE; j++) buf[j] = _main_map.me[i++].m8;
 		SlArray(buf.data(), MAP_SL_BUF_SIZE, SLE_UINT16);
 	}
 }

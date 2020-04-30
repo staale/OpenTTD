@@ -23,10 +23,11 @@
  * @pre IsTileType(t, MP_TUNNELBRIDGE)
  * @return the above mentioned direction
  */
-static inline DiagDirection GetTunnelBridgeDirection(TileIndex t)
+template <typename Tindex>
+static inline DiagDirection GetTunnelBridgeDirection(const Tindex &t)
 {
 	assert(IsTileType(t, MP_TUNNELBRIDGE));
-	return (DiagDirection)GB(_m[t].m5, 0, 2);
+	return (DiagDirection)GB(GetTile(t)->m5, 0, 2);
 }
 
 /**
@@ -36,10 +37,11 @@ static inline DiagDirection GetTunnelBridgeDirection(TileIndex t)
  * @pre IsTileType(t, MP_TUNNELBRIDGE)
  * @return the transport type in the tunnel/bridge
  */
-static inline TransportType GetTunnelBridgeTransportType(TileIndex t)
+template <typename Tindex>
+static inline TransportType GetTunnelBridgeTransportType(const Tindex &t)
 {
 	assert(IsTileType(t, MP_TUNNELBRIDGE));
-	return (TransportType)GB(_m[t].m5, 2, 2);
+	return (TransportType)GB(GetTile(t)->m5, 2, 2);
 }
 
 /**
@@ -52,7 +54,7 @@ static inline TransportType GetTunnelBridgeTransportType(TileIndex t)
 static inline bool HasTunnelBridgeSnowOrDesert(TileIndex t)
 {
 	assert(IsTileType(t, MP_TUNNELBRIDGE));
-	return HasBit(_me[t].m7, 5);
+	return HasBit(GetTileEx(t)->m7, 5);
 }
 
 /**
@@ -66,7 +68,7 @@ static inline bool HasTunnelBridgeSnowOrDesert(TileIndex t)
 static inline void SetTunnelBridgeSnowOrDesert(TileIndex t, bool snow_or_desert)
 {
 	assert(IsTileType(t, MP_TUNNELBRIDGE));
-	SB(_me[t].m7, 5, 1, snow_or_desert);
+	SB(GetTileEx(t)->m7, 5, 1, snow_or_desert);
 }
 
 /**
@@ -75,7 +77,8 @@ static inline void SetTunnelBridgeSnowOrDesert(TileIndex t, bool snow_or_desert)
  * @pre IsTileType(t, MP_TUNNELBRIDGE)
  * @return other end
  */
-static inline TileIndex GetOtherTunnelBridgeEnd(TileIndex t)
+template <typename Tindex>
+static inline Tindex GetOtherTunnelBridgeEnd(const Tindex &t)
 {
 	assert(IsTileType(t, MP_TUNNELBRIDGE));
 	return IsTunnel(t) ? GetOtherTunnelEnd(t) : GetOtherBridgeEnd(t);
@@ -92,7 +95,7 @@ static inline bool HasTunnelBridgeReservation(TileIndex t)
 {
 	assert(IsTileType(t, MP_TUNNELBRIDGE));
 	assert(GetTunnelBridgeTransportType(t) == TRANSPORT_RAIL);
-	return HasBit(_m[t].m5, 4);
+	return HasBit(GetTile(t)->m5, 4);
 }
 
 /**
@@ -105,7 +108,7 @@ static inline void SetTunnelBridgeReservation(TileIndex t, bool b)
 {
 	assert(IsTileType(t, MP_TUNNELBRIDGE));
 	assert(GetTunnelBridgeTransportType(t) == TRANSPORT_RAIL);
-	SB(_m[t].m5, 4, 1, b ? 1 : 0);
+	SB(GetTile(t)->m5, 4, 1, b ? 1 : 0);
 }
 
 /**

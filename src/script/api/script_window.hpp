@@ -21,6 +21,7 @@
 #include "../../widgets/bridge_widget.h"
 #include "../../widgets/build_vehicle_widget.h"
 #include "../../widgets/cheat_widget.h"
+#include "../../widgets/clipboard_widget.h"
 #include "../../widgets/company_widget.h"
 #include "../../widgets/console_widget.h"
 #include "../../widgets/date_widget.h"
@@ -112,6 +113,8 @@ public:
 
 		WN_NETWORK_STATUS_WINDOW_JOIN                = ::WN_NETWORK_STATUS_WINDOW_JOIN,                ///< Network join status.
 		WN_NETWORK_STATUS_WINDOW_CONTENT_DOWNLOAD    = ::WN_NETWORK_STATUS_WINDOW_CONTENT_DOWNLOAD,    ///< Network content download status.
+
+		WN_CLIPBOARD_TOOLBAR                         = ::WN_CLIPBOARD_TOOLBAR,                         ///< Clipboard toolbar.
 	};
 
 	// @endenum
@@ -147,6 +150,7 @@ public:
 		 *   - #TRANSPORT_AIR = #AirportToolbarWidgets
 		 *   - #TRANSPORT_WATER = #DockToolbarWidgets
 		 *   - #TRANSPORT_ROAD = #RoadToolbarWidgets
+		 *   - #WN_CLIPBOARD_TOOLBAR = #ClipboardToolbarWidgets
 		 */
 		WC_BUILD_TOOLBAR                             = ::WC_BUILD_TOOLBAR,
 
@@ -154,6 +158,7 @@ public:
 		 * Scenario build toolbar; %Window numbers:
 		 *   - #TRANSPORT_WATER = #DockToolbarWidgets
 		 *   - #TRANSPORT_ROAD = #RoadToolbarWidgets
+		 *   - #WN_CLIPBOARD_TOOLBAR = #ClipboardToolbarWidgets
 		 */
 		WC_SCEN_BUILD_TOOLBAR                        = ::WC_SCEN_BUILD_TOOLBAR,
 
@@ -1011,6 +1016,48 @@ public:
 	/** Widgets of the #CheatWindow class. */
 	enum CheatWidgets {
 		WID_C_PANEL                                  = ::WID_C_PANEL,                                  ///< Panel where all cheats are shown in.
+	};
+
+	/* automatically generated from ../../widgets/clipboard_widget.h */
+	/** Widgets of the #ClipboardToolbarWindow class. */
+	enum ClipboardToolbarWidgets {
+		WID_CT_CLIPBOARD_1                           = ::WID_CT_CLIPBOARD_1,                           ///< Button to switch to clipboard #1
+		WID_CT_CLIPBOARD_2                           = ::WID_CT_CLIPBOARD_2,                           ///< Button to switch to clipboard #2
+		WID_CT_CLIPBOARD_3                           = ::WID_CT_CLIPBOARD_3,                           ///< Button to switch to clipboard #3
+		WID_CT_CLIPBOARD_4                           = ::WID_CT_CLIPBOARD_4,                           ///< Button to switch to clipboard #4
+
+		WID_CT_COPY                                  = ::WID_CT_COPY,                                  ///< Copy button
+		WID_CT_PASTE                                 = ::WID_CT_PASTE,                                 ///< Paste button
+
+		WID_CT_PASTE_FLAG_BUTTON_BEGIN               = ::WID_CT_PASTE_FLAG_BUTTON_BEGIN,               ///< First button to toggle copy-paste flag
+		WID_CT_WITH_RAIL                             = ::WID_CT_WITH_RAIL,                             ///< Toggle rails button (newgame only)
+		WID_CT_WITH_ROAD                             = ::WID_CT_WITH_ROAD,                             ///< Toggle roads button
+		WID_CT_WITH_WATER                            = ::WID_CT_WITH_WATER,                            ///< Toggle water button
+		WID_CT_WITH_AIR                              = ::WID_CT_WITH_AIR,                              ///< Toggle air button (newgame only)
+		WID_CT_MIRROR_SIGNALS                        = ::WID_CT_MIRROR_SIGNALS,                        ///< Toggle signal mirrorig button (newgame only)
+		WID_CT_UPGRADE_BRIDGES                       = ::WID_CT_UPGRADE_BRIDGES,                       ///< Toggle bridge upgrading button (newgame only)
+		WID_CT_WITH_STATIONS                         = ::WID_CT_WITH_STATIONS,                         ///< Toggle stations button (newgame only)
+		WID_CT_WITH_OBJECTS                          = ::WID_CT_WITH_OBJECTS,                          ///< Toggle objects button (scenario editor only)
+		WID_CT_WITH_HOUSES                           = ::WID_CT_WITH_HOUSES,                           ///< Toggle houses button (scenario editor only)
+		WID_CT_WITH_INDUSTRIES                       = ::WID_CT_WITH_INDUSTRIES,                       ///< Toggle industries button (scenario editor only)
+		WID_CT_WITH_RIVERS                           = ::WID_CT_WITH_RIVERS,                           ///< Toggle rivers button (scenario editor only)
+		WID_CT_WITH_TREES                            = ::WID_CT_WITH_TREES,                            ///< Toggle trees button (scenario editor only)
+		WID_CT_WITH_GROUND                           = ::WID_CT_WITH_GROUND,                           ///< Toggle ground button (scenario editor only)
+		WID_CT_PASTE_FLAG_BUTTON_END                 = ::WID_CT_PASTE_FLAG_BUTTON_END,                 ///< Past-the-last button to toggle copy-paste flag
+
+		WID_CT_CONVERT_RAILTYPE                      = ::WID_CT_CONVERT_RAILTYPE,                      ///< Button to select railtype to convert to (newgame only)
+		WID_CT_TERRAFORM                             = ::WID_CT_TERRAFORM,                             ///< Button to select terraforming mode
+
+		WID_CT_TRANSFORMATION                        = ::WID_CT_TRANSFORMATION,                        ///< Button to show/reset clipboard transformation
+		WID_CT_ROTATE_LEFT                           = ::WID_CT_ROTATE_LEFT,                           ///< Rotate left button
+		WID_CT_ROTATE_RIGHT                          = ::WID_CT_ROTATE_RIGHT,                          ///< Rotate right button
+		WID_CT_REFLECT_NE_SW                         = ::WID_CT_REFLECT_NE_SW,                         ///< Reflect against NE-SW axis button
+		WID_CT_REFLECT_NW_SE                         = ::WID_CT_REFLECT_NW_SE,                         ///< Reflect against NW-SE axis button
+
+		WID_CT_HEIGHT_DIFF_GLYPH                     = ::WID_CT_HEIGHT_DIFF_GLYPH,                     ///< Image in front of buttons to increase/decrease height level
+		WID_CT_HEIGHT_DIFF                           = ::WID_CT_HEIGHT_DIFF,                           ///< Panel with buttons to increase/decrease height level
+		WID_CT_HEIGHT_DIFF_INCREASE                  = ::WID_CT_HEIGHT_DIFF_INCREASE,                  ///< Button to increase height level
+		WID_CT_HEIGHT_DIFF_DECREASE                  = ::WID_CT_HEIGHT_DIFF_DECREASE,                  ///< Button to decrease height level
 	};
 
 	/* automatically generated from ../../widgets/company_widget.h */
@@ -2385,6 +2432,7 @@ public:
 		WID_TT_LOWER_LAND                            = ::WID_TT_LOWER_LAND,                            ///< Lower land button.
 		WID_TT_RAISE_LAND                            = ::WID_TT_RAISE_LAND,                            ///< Raise land button.
 		WID_TT_LEVEL_LAND                            = ::WID_TT_LEVEL_LAND,                            ///< Level land button.
+		WID_TT_CLIPBOARD                             = ::WID_TT_CLIPBOARD,                             ///< Button to open the clipboard toolbar
 		WID_TT_DEMOLISH                              = ::WID_TT_DEMOLISH,                              ///< Demolish aka dynamite button.
 		WID_TT_BUY_LAND                              = ::WID_TT_BUY_LAND,                              ///< Buy land button.
 		WID_TT_PLANT_TREES                           = ::WID_TT_PLANT_TREES,                           ///< Plant trees button (note: opens separate window, no place-push-button).
@@ -2405,6 +2453,7 @@ public:
 		WID_ETT_PLACE_ROCKS                          = ::WID_ETT_PLACE_ROCKS,                          ///< Place rocks button.
 		WID_ETT_PLACE_DESERT                         = ::WID_ETT_PLACE_DESERT,                         ///< Place desert button (in tropical climate).
 		WID_ETT_PLACE_OBJECT                         = ::WID_ETT_PLACE_OBJECT,                         ///< Place transmitter button.
+		WID_ETT_CLIPBOARD                            = ::WID_ETT_CLIPBOARD,                            ///< Button to open the clipboard toolbar.
 		WID_ETT_BUTTONS_END                          = ::WID_ETT_BUTTONS_END,                          ///< End of pushable buttons.
 		WID_ETT_INCREASE_SIZE                        = ::WID_ETT_INCREASE_SIZE,                        ///< Upwards arrow button to increase terraforming size.
 		WID_ETT_DECREASE_SIZE                        = ::WID_ETT_DECREASE_SIZE,                        ///< Downwards arrow button to decrease terraforming size.

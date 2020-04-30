@@ -9,7 +9,10 @@
 
 #include "stdafx.h"
 #include "landscape.h"
+#include "copypaste_cmd.h"
 #include "command_func.h"
+#include "clipboard_gui.h"
+#include "clipboard_func.h"
 #include "viewport_func.h"
 #include "company_base.h"
 #include "town.h"
@@ -32,6 +35,7 @@
 #include "date_func.h"
 #include "newgrf_debug.h"
 #include "vehicle_func.h"
+#include "tilearea_func.h"
 
 #include "table/strings.h"
 #include "table/object_land.h"
@@ -834,6 +838,99 @@ static CommandCost TerraformTile_Object(TileIndex tile, DoCommandFlag flags, int
 	return DoCommand(tile, 0, 0, flags, CMD_LANDSCAPE_CLEAR);
 }
 
+ClipboardObjectsBuilder _clipboard_objects_builder; ///< for collecting data about objects (types, coulurs, views)
+
+static void GetTypeColourViewFromGenericObject(GenericTileIndex tile, ObjectType *type, byte *colour, byte *view)
+{
+	if (IsMainMapTile(tile)) {
+		const Object *obj = Object::GetByTile(AsMainMapTile(tile));
+		*type   = obj->type;
+		*colour = obj->colour;
+		*view   = obj->view;
+	} else {
+		const ClipboardObject *obj = ClipboardObject::GetByTile(tile);
+		*type   = obj->type;
+		*colour = obj->colour;
+		*view   = obj->view;
+	}
+}
+
+static GenericTileArea GetLocationFromGenericObject(GenericTileIndex tile)
+{
+	if (IsMainMapTile(tile)) {
+		return Object::GetByTile(AsMainMapTile(tile))->location;
+	} else {
+		return GenericTileArea(ClipboardObject::GetByTile(tile)->location, MapOf(tile));
+	}
+}
+
+bool TestObjectTileCopyability(GenericTileIndex tile, const GenericTileArea &src_area, CopyPasteMode mode, GenericTileArea *object_rect, TileContentPastePreview *preview = NULL)
+{
+	if (_game_mode != GM_EDITOR) return false;
+	if (!(mode & CPM_WITH_OBJECTS)) return false;
+
+	GenericTileArea ta = GetLocationFromGenericObject(tile);
+	if (!src_area.Contains(ta)) return false;
+
+	if (object_rect != NULL) {
+		*object_rect = (tile == ta.tile) ? ta : GenericTileArea(GenericTileIndex(INVALID_TILE_INDEX, MapOf(tile)), 0, 0);
+	}
+
+	if (preview != NULL) preview->highlight_tile_rect = true;
+	return true;
+}
+
+void CopyPasteTile_Object(GenericTileIndex src_tile, GenericTileIndex dst_tile, const CopyPasteParams &copy_paste)
+{
+	GenericTileArea src_rect;
+	if (!TestObjectTileCopyability(src_tile, copy_paste.src_area, copy_paste.mode, &src_rect)) return;
+
+	if (IsMainMapTile(dst_tile)) {
+		/* paste this object only once (when at most northern tile) */
+		if (!IsValidTileIndex(src_rect.tile)) return;
+
+		/* transform the object */
+		if (copy_paste.transformation != DTR_IDENTITY) {
+			/* only square objects can be rotated by 90 degree etc. */
+			if (src_rect.w != src_rect.h && TransformAxis(AXIS_X, copy_paste.transformation) != AXIS_X) {
+				_current_pasting->CollectError(AsMainMapTile(dst_tile), STR_ERROR_INAPPLICABLE_TRANSFORMATION, STR_ERROR_CAN_T_BUILD_OBJECT);
+				return;
+			}
+		}
+
+		/* terraform tiles */
+		if ((copy_paste.mode & CPM_TERRAFORM_MASK) == CPM_TERRAFORM_MINIMAL) {
+			CopyPasteHeights(src_rect, copy_paste);
+		}
+	}
+
+	ObjectType type;
+	byte colour, view;
+	GetTypeColourViewFromGenericObject(src_tile, &type, &colour, &view);
+
+	GenericTileArea dst_rect = TransformTileArea(src_rect, copy_paste.TileTransform(), MapOf(dst_tile));
+
+	if (IsMainMapTile(dst_tile)) {
+		TileIndex t = AsMainMapTile(dst_rect.tile);
+		_current_pasting->DoCommand(t, type, view, CMD_BUILD_OBJECT | CMD_MSG(STR_ERROR_CAN_T_BUILD_OBJECT));
+		if ((_current_pasting->dc_flags & DC_EXEC) && _current_pasting->last_result.Succeeded()) {
+			Object::GetByTile(t)->colour = colour;
+		}
+	} else {
+		ObjectID oid = GetObjectIndex(src_tile);
+		MakeObject(dst_tile, OWNER_NONE, oid, GetWaterClass(src_tile), GetObjectRandomBits(src_tile));
+		if (src_rect.tile == src_tile) {
+			RawTileArea raw_dst_rect = { IndexOf(dst_rect.tile), dst_rect.w, dst_rect.h };
+			_clipboard_objects_builder.Add(oid, type, raw_dst_rect, colour, view);
+		}
+	}
+}
+
+void AfterCopyingObjects(const CopyPasteParams &copy_paste)
+{
+	_clipboard_objects_builder.BuildDone(MapOf(copy_paste.dst_area.tile));
+}
+
 extern const TileTypeProcs _tile_type_object_procs = {
 	DrawTile_Object,             // draw_tile_proc
 	GetSlopePixelZ_Object,       // get_slope_z_proc
@@ -849,4 +946,5 @@ extern const TileTypeProcs _tile_type_object_procs = {
 	nullptr,                        // vehicle_enter_tile_proc
 	GetFoundation_Object,        // get_foundation_proc
 	TerraformTile_Object,        // terraform_tile_proc
+	CopyPasteTile_Object,        // copypaste_tile_proc
 };

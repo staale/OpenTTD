@@ -10,6 +10,7 @@
 #include "stdafx.h"
 #include "debug.h"
 #include "core/alloc_func.hpp"
+#include "core/geometry_func.hpp"
 #include "water_map.h"
 #include "string_func.h"
 
@@ -20,6 +21,7 @@
 extern "C" _CRTIMP void __cdecl _assert(void *, void *, unsigned);
 #endif
 
+MainMap _main_map; ///< The main tile array.
 uint _map_log_x;     ///< 2^_map_log_x == _map_size_x
 uint _map_log_y;     ///< 2^_map_log_y == _map_size_y
 uint _map_size_x;    ///< Size of the map along the X
@@ -49,18 +51,18 @@ void AllocateMap(uint size_x, uint size_y)
 
 	DEBUG(map, 1, "Allocating map of size %dx%d", size_x, size_y);
 
-	_map_log_x = FindFirstBit(size_x);
-	_map_log_y = FindFirstBit(size_y);
-	_map_size_x = size_x;
-	_map_size_y = size_y;
-	_map_size = size_x * size_y;
-	_map_tile_mask = _map_size - 1;
+	_main_map.log_x = FindFirstBit(size_x);
+	_main_map.log_y = FindFirstBit(size_y);
+	_main_map.size_x = size_x;
+	_main_map.size_y = size_y;
+	_main_map.size = size_x * size_y;
+	_main_map.tile_mask = _main_map.size - 1;
 
-	free(_m);
-	free(_me);
+	free(_main_map.m);
+	free(_main_map.me);
 
-	_m = CallocT<Tile>(_map_size);
-	_me = CallocT<TileExtended>(_map_size);
+	_main_map.m = CallocT<Tile>(_main_map.size);
+	_main_map.me = CallocT<TileExtended>(_main_map.size);
 }
 
 
@@ -96,7 +98,25 @@ TileIndex TileAdd(TileIndex tile, TileIndexDiff add,
 
 	return TileXY(x, y);
 }
+
+GenericTileIndex TileAddXY(GenericTileIndex tile, int dx, int dy, const char *exp, const char *file, int line)
+{
+	uint x = TileX(tile) + dx;
+	uint y = TileY(tile) + dy;
+
+	if (x >= MapSizeX(MapOf(tile)) || y >= MapSizeY(MapOf(tile))) {
+		char buf[512];
+		seprintf(buf, lastof(buf), "TILE_ADDXY(%s) when adding 0x%.4X and <0x%.4X, 0x%.4X> failed", exp, IndexOf(tile), dx, dy);
+#if !defined(_MSC_VER) || defined(WINCE)
+		fprintf(stderr, "%s:%d %s\n", file, line, buf);
+#else
+		_assert(buf, (char*)file, line);
 #endif
+	}
+
+	return TileXY(x, y, MapOf(tile));
+}
+#endif /* _DEBUG */
 
 /**
  * This function checks if we add addx/addy to tile, if we
@@ -123,6 +143,41 @@ TileIndex TileAddWrap(TileIndex tile, int addx, int addy)
 	if (x >= MapMaxX() || y >= MapMaxY()) return INVALID_TILE;
 
 	return TileXY(x, y);
+}
+
+/**
+ * Create a #TileTransformation based on two tiles - before and after transformation.
+ *
+ * @param from_x X coordinate of the tile before transformation.
+ * @param from_y Y coordinate of the tile before transformation.
+ * @param to_x X coordinate of the transformed tile.
+ * @param to_y Y coordinate of the transformed tile.
+ * @param dtr Direction transformation.
+ * @return Transformation between the two tiles.
+ */
+TileTransformation TransformationBetweenTiles(int from_x, int from_y, int to_x, int to_y, DirTransformation dtr)
+{
+	Point tile = { from_x, from_y };
+	tile = TransformPoint(tile, dtr);
+	TileTransformation ret = { dtr, { (short)(to_x - tile.x), (short)(to_y - tile.y) } };
+	return ret;
+}
+
+/**
+ * Transform coordinates of a tile.
+ *
+ * @param x X coordinate of the tile.
+ * @param y Y coordinate of the tile.
+ * @param transformation Transformation to perform.
+ * @return The transformed coordinates of the tile.
+ */
+Point TransformTile(int x, int y, TileTransformation transformation)
+{
+	Point tile = { x, y };
+	tile = TransformPoint(tile, transformation.dtr);
+	tile.x += transformation.offset.x;
+	tile.y += transformation.offset.y;
+	return tile;
 }
 
 /** 'Lookup table' for tile offsets given a DiagDirection */

@@ -9,6 +9,7 @@
 
 #include "stdafx.h"
 
+#include "core/geometry_func.hpp"
 #include "tilearea_type.h"
 
 #include "safeguards.h"
@@ -18,10 +19,12 @@
  * @param start the start of the area
  * @param end   the end of the area
  */
-OrthogonalTileArea::OrthogonalTileArea(TileIndex start, TileIndex end)
+template <bool Tgeneric>
+OrthogonalTileAreaT<Tgeneric>::OrthogonalTileAreaT(TileIndexType start, TileIndexType end)
 {
-	assert(start < MapSize());
-	assert(end < MapSize());
+	assert(IsSameMap(start, end));
+	assert(IsValidTileIndex(start));
+	assert(IsValidTileIndex(end));
 
 	uint sx = TileX(start);
 	uint sy = TileY(start);
@@ -31,7 +34,7 @@ OrthogonalTileArea::OrthogonalTileArea(TileIndex start, TileIndex end)
 	if (sx > ex) Swap(sx, ex);
 	if (sy > ey) Swap(sy, ey);
 
-	this->tile = TileXY(sx, sy);
+	this->tile = TileXY<Tgeneric>(sx, sy, MapOf(start));
 	this->w    = ex - sx + 1;
 	this->h    = ey - sy + 1;
 }
@@ -40,14 +43,17 @@ OrthogonalTileArea::OrthogonalTileArea(TileIndex start, TileIndex end)
  * Add a single tile to a tile area; enlarge if needed.
  * @param to_add The tile to add
  */
-void OrthogonalTileArea::Add(TileIndex to_add)
+template <bool Tgeneric>
+void OrthogonalTileAreaT<Tgeneric>::Add(TileIndexType to_add)
 {
-	if (this->tile == INVALID_TILE) {
+	if (!IsValidTileIndex(this->tile)) {
 		this->tile = to_add;
 		this->w = 1;
 		this->h = 1;
 		return;
 	}
+
+	assert(IsSameMap(this->tile, to_add));
 
 	uint sx = TileX(this->tile);
 	uint sy = TileY(this->tile);
@@ -62,7 +68,7 @@ void OrthogonalTileArea::Add(TileIndex to_add)
 	ex = max(ax, ex);
 	ey = max(ay, ey);
 
-	this->tile = TileXY(sx, sy);
+	this->tile = TileXY<Tgeneric>(sx, sy, MapOf(to_add));
 	this->w    = ex - sx + 1;
 	this->h    = ey - sy + 1;
 }
@@ -72,11 +78,13 @@ void OrthogonalTileArea::Add(TileIndex to_add)
  * @param ta the other tile area to check against.
  * @return true if they intersect.
  */
-bool OrthogonalTileArea::Intersects(const OrthogonalTileArea &ta) const
+template <bool Tgeneric>
+bool OrthogonalTileAreaT<Tgeneric>::Intersects(const OrthogonalTileAreaT<Tgeneric> &ta) const
 {
 	if (ta.w == 0 || this->w == 0) return false;
 
 	assert(ta.w != 0 && ta.h != 0 && this->w != 0 && this->h != 0);
+	assert(IsSameMap(this->tile, ta.tile));
 
 	uint left1   = TileX(this->tile);
 	uint top1    = TileY(this->tile);
@@ -97,15 +105,47 @@ bool OrthogonalTileArea::Intersects(const OrthogonalTileArea &ta) const
 }
 
 /**
+ * Does this tile area contains another?
+ * @param ta the other tile area to check against.
+ * @return true if the other area is fully contained.
+ */
+template <bool Tgeneric>
+bool OrthogonalTileAreaT<Tgeneric>::Contains(const OrthogonalTileAreaT<Tgeneric> &ta) const
+{
+	if (ta.w == 0 || this->w == 0) return false;
+
+	assert(ta.w != 0 && ta.h != 0 && this->w != 0 && this->h != 0);
+	assert(IsSameMap(this->tile, ta.tile));
+
+	uint left1   = TileX(this->tile);
+	uint top1    = TileY(this->tile);
+	uint right1  = left1 + this->w - 1;
+	uint bottom1 = top1  + this->h - 1;
+
+	uint left2   = TileX(ta.tile);
+	uint top2    = TileY(ta.tile);
+	uint right2  = left2 + ta.w - 1;
+	uint bottom2 = top2  + ta.h - 1;
+
+	return
+			left2   >= left1  &&
+			right2  <= right1 &&
+			top2    >= top1   &&
+			bottom2 <= bottom1;
+}
+
+/**
  * Does this tile area contain a tile?
  * @param tile Tile to test for.
  * @return True if the tile is inside the area.
  */
-bool OrthogonalTileArea::Contains(TileIndex tile) const
+template <bool Tgeneric>
+bool OrthogonalTileAreaT<Tgeneric>::Contains(TileIndexType tile) const
 {
 	if (this->w == 0) return false;
 
 	assert(this->w != 0 && this->h != 0);
+	assert(IsSameMap(this->tile, tile));
 
 	uint left   = TileX(this->tile);
 	uint top    = TileY(this->tile);
@@ -120,7 +160,8 @@ bool OrthogonalTileArea::Contains(TileIndex tile) const
  * @param rad Number of tiles to expand
  * @return The OrthogonalTileArea.
  */
-OrthogonalTileArea &OrthogonalTileArea::Expand(int rad)
+template <bool Tgeneric>
+OrthogonalTileAreaT<Tgeneric> &OrthogonalTileAreaT<Tgeneric>::Expand(int rad)
 {
 	int x = TileX(this->tile);
 	int y = TileY(this->tile);
@@ -130,7 +171,7 @@ OrthogonalTileArea &OrthogonalTileArea::Expand(int rad)
 	int ex = min(x + this->w + rad, MapSizeX());
 	int ey = min(y + this->h + rad, MapSizeY());
 
-	this->tile = TileXY(sx, sy);
+	this->tile = TileXY<Tgeneric>(sx, sy, MapOf(this->tile));
 	this->w    = ex - sx;
 	this->h    = ey - sy;
 	return *this;
@@ -139,11 +180,77 @@ OrthogonalTileArea &OrthogonalTileArea::Expand(int rad)
 /**
  * Clamp the tile area to map borders.
  */
-void OrthogonalTileArea::ClampToMap()
+template <bool Tgeneric>
+void OrthogonalTileAreaT<Tgeneric>::ClampToMap()
 {
-	assert(this->tile < MapSize());
-	this->w = min(this->w, MapSizeX() - TileX(this->tile));
-	this->h = min(this->h, MapSizeY() - TileY(this->tile));
+	assert(IsValidTileIndex(this->tile));
+	this->w = min(this->w, MapSizeX(MapOf(this->tile)) - TileX(this->tile));
+	this->h = min(this->h, MapSizeY(MapOf(this->tile)) - TileY(this->tile));
+}
+
+/**
+ * Create a #TileTransformation based on two tile areas - before and after transformation.
+ *
+ * @param from Area before transormation.
+ * @param to Transformed area.
+ * @param dtr Direction transformation.
+ * @return Transformation between the two areas.
+ */
+TileTransformation TransformationBetweenTileAreas(const GenericTileArea &from, const GenericTileArea &to, DirTransformation dtr)
+{
+	assert((TransformAxis(AXIS_X, dtr) == AXIS_X) ? (from.w == to.w && from.h == to.h) : (from.w == to.h && from.h == to.w));
+
+	TileIndexDiffC dir = TransformedNorthCornerDiffC(dtr);
+	return TransformationBetweenTiles(
+			TileX(from.tile),
+			TileY(from.tile),
+			TileX(to.tile) + (to.w - 1) * dir.x,
+			TileY(to.tile) + (to.h - 1) * dir.y,
+			dtr);
+}
+
+/**
+ * Create a #TileTransformation between tile corners of two tile areas - before and after transformation.
+ *
+ * @param from Area before transormation.
+ * @param to Transformed area.
+ * @param dtr Direction transformation.
+ * @return Transformation between tile corners of the two areas.
+ */
+TileTransformation TransformationBetweenTileAreaCorners(const GenericTileArea &from, const GenericTileArea &to, DirTransformation dtr)
+{
+	TileTransformation ret = TransformationBetweenTileAreas(from, to, dtr);
+	TileIndexDiffC extra = TransformedNorthCornerDiffC(dtr);
+	ret.offset.x += extra.x;
+	ret.offset.y += extra.y;
+	return ret;
+}
+
+/**
+ * Transform a tile area.
+ *
+ * @param ta The area to transform.
+ * @param transformation Transformation to perform.
+ * @param dst_map Destination map.
+ * @return The transformed area.
+ */
+GenericTileArea TransformTileArea(const GenericTileArea &ta, TileTransformation transformation, Map *dst_map)
+{
+	Dimension size = { ta.w, ta.h };
+	size = TransformDimension(size, transformation.dtr);
+	Point pt = TransformTile(TileX(ta.tile), TileY(ta.tile), transformation);
+	TileIndexDiffC dir = TransformedNorthCornerDiffC(transformation.dtr);
+	pt.x -= (size.width - 1) * dir.x;
+	pt.y -= (size.height - 1) * dir.y;
+
+	return GenericTileArea(TileXY(pt.x, pt.y, dst_map), size.width, size.height);
+}
+
+GenericTileArea TransformTileArea(const GenericTileArea &ta, GenericTileIndex dst_tile, DirTransformation transformation)
+{
+	Dimension size = { ta.w, ta.h };
+	size = TransformDimension(size, transformation);
+	return GenericTileArea(dst_tile, size.width, size.height);
 }
 
 /**
@@ -151,10 +258,12 @@ void OrthogonalTileArea::ClampToMap()
  * @param start First corner of the area.
  * @param end Second corner of the area.
  */
-DiagonalTileArea::DiagonalTileArea(TileIndex start, TileIndex end) : tile(start)
+template <bool Tgeneric>
+DiagonalTileAreaT<Tgeneric>::DiagonalTileAreaT(TileIndexType start, TileIndexType end) : tile(start)
 {
-	assert(start < MapSize());
-	assert(end < MapSize());
+	assert(IsSameMap(start, end));
+	assert(IsValidTileIndex(start));
+	assert(IsValidTileIndex(end));
 
 	/* Unfortunately we can't find a new base and make all a and b positive because
 	 * the new base might be a "flattened" corner where there actually is no single
@@ -184,8 +293,11 @@ DiagonalTileArea::DiagonalTileArea(TileIndex start, TileIndex end) : tile(start)
  * @param tile Tile to test for.
  * @return True if the tile is inside the area.
  */
-bool DiagonalTileArea::Contains(TileIndex tile) const
+template <bool Tgeneric>
+bool DiagonalTileAreaT<Tgeneric>::Contains(TileIndexType tile) const
 {
+	assert(IsSameMap(this->tile, tile));
+
 	int a = TileY(tile) + TileX(tile);
 	int b = TileY(tile) - TileX(tile);
 
@@ -211,11 +323,12 @@ bool DiagonalTileArea::Contains(TileIndex tile) const
 }
 
 /**
- * Move ourselves to the next tile in the rectangle on the map.
+ * Perform single iteration step.
  */
-TileIterator &DiagonalTileIterator::operator++()
+template <bool Tgeneric>
+TileIteratorT<Tgeneric>& DiagonalTileIteratorT<Tgeneric>::operator ++()
 {
-	assert(this->tile != INVALID_TILE);
+	assert(IsValidTileIndex(this->tile));
 
 	/* Determine the next tile, while clipping at map borders */
 	bool new_line = false;
@@ -256,9 +369,22 @@ TileIterator &DiagonalTileIterator::operator++()
 		uint x = this->base_x + (this->a_cur - this->b_cur) / 2;
 		uint y = this->base_y + (this->b_cur + this->a_cur) / 2;
 		/* Prevent wrapping around the map's borders. */
-		this->tile = x >= MapSizeX() || y >= MapSizeY() ? INVALID_TILE : TileXY(x, y);
-	} while (this->tile > MapSize() && this->b_max != this->b_cur);
+		if (x >= MapSizeX(MapOf(this->tile)) || y >= MapSizeY(MapOf(this->tile))) {
+			IndexOf(this->tile) = INVALID_TILE_INDEX;
+		} else {
+			this->tile = TileXY<Tgeneric>(x, y, MapOf(this->tile));
+		}
+	} while (!IsValidTileIndex(this->tile) && this->b_max != this->b_cur);
 
-	if (this->b_max == this->b_cur) this->tile = INVALID_TILE;
+	if (this->b_max == this->b_cur) IndexOf(this->tile) = INVALID_TILE_INDEX;
+
 	return *this;
 }
+
+/* instantiate */
+template struct OrthogonalTileAreaT<false>;
+template struct OrthogonalTileAreaT<true>;
+template struct DiagonalTileAreaT<false>;
+template struct DiagonalTileAreaT<true>;
+template class DiagonalTileIteratorT<true>;
+template class DiagonalTileIteratorT<false>;

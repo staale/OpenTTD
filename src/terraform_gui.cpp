@@ -31,6 +31,7 @@
 #include "engine_base.h"
 #include "terraform_gui.h"
 #include "zoom_func.h"
+#include "network/network.h"
 
 #include "widgets/terraform_widget.h"
 
@@ -168,6 +169,9 @@ struct TerraformToolbarWindow : Window {
 		/* Don't show the place object button when there are no objects to place. */
 		NWidgetStacked *show_object = this->GetWidget<NWidgetStacked>(WID_TT_SHOW_PLACE_OBJECT);
 		show_object->SetDisplayedPlane(ObjectClass::GetUIClassCount() != 0 ? 0 : SZSP_NONE);
+
+		/* Disable the clipboard button if the clipboard is not available. */
+		this->SetWidgetDisabledState(WID_TT_CLIPBOARD, _networking && _settings_game.construction.clipboard_capacity <= 0);
 	}
 
 	void OnClick(Point pt, int widget, int click_count) override
@@ -188,6 +192,12 @@ struct TerraformToolbarWindow : Window {
 			case WID_TT_LEVEL_LAND: // Level land button
 				HandlePlacePushButton(this, WID_TT_LEVEL_LAND, SPR_CURSOR_LEVEL_LAND, HT_POINT | HT_DIAGONAL);
 				this->last_user_action = widget;
+				break;
+
+			case WID_TT_CLIPBOARD: // Show the clipboard toolbar
+				/* This button is NOT a place-push-button, so don't treat it as such */
+				this->HandleButtonClick(WID_TT_CLIPBOARD);
+				ShowClipboardToolbar();
 				break;
 
 			case WID_TT_DEMOLISH: // Demolish aka dynamite button
@@ -325,6 +335,8 @@ static const NWidgetPart _nested_terraform_widgets[] = {
 
 		NWidget(WWT_PANEL, COLOUR_DARK_GREEN), SetMinimalSize(4, 22), EndContainer(),
 
+		NWidget(WWT_PUSHIMGBTN, COLOUR_DARK_GREEN, WID_TT_CLIPBOARD), SetMinimalSize(22, 22),
+								SetFill(0, 1), SetDataTip(SPR_IMG_CLIPBOARD, STR_LANDSCAPING_TOOLTIP_SHOW_CLIPBOARD_TOOLBAR),
 		NWidget(WWT_IMGBTN, COLOUR_DARK_GREEN, WID_TT_DEMOLISH), SetMinimalSize(22, 22),
 								SetFill(0, 1), SetDataTip(SPR_IMG_DYNAMITE, STR_TOOLTIP_DEMOLISH_BUILDINGS_ETC),
 		NWidget(WWT_IMGBTN, COLOUR_DARK_GREEN, WID_TT_BUY_LAND), SetMinimalSize(22, 22),
@@ -464,6 +476,8 @@ static const NWidgetPart _nested_scen_edit_land_gen_widgets[] = {
 			EndContainer(),
 			NWidget(WWT_PUSHIMGBTN, COLOUR_GREY, WID_ETT_PLACE_OBJECT), SetMinimalSize(23, 22),
 										SetFill(0, 1), SetDataTip(SPR_IMG_TRANSMITTER, STR_SCENEDIT_TOOLBAR_PLACE_OBJECT),
+			NWidget(WWT_PUSHIMGBTN, COLOUR_DARK_GREEN, WID_ETT_CLIPBOARD), SetMinimalSize(22, 22),
+										SetFill(0, 1), SetDataTip(SPR_IMG_CLIPBOARD, STR_LANDSCAPING_TOOLTIP_SHOW_CLIPBOARD_TOOLBAR),
 			NWidget(NWID_SPACER), SetFill(1, 0),
 		EndContainer(),
 		NWidget(NWID_HORIZONTAL),
@@ -605,6 +619,12 @@ struct ScenarioEditorLandscapeGenerationWindow : Window {
 
 			case WID_ETT_PLACE_OBJECT: // Place transmitter button
 				ShowBuildObjectPicker();
+				break;
+
+			case WID_ETT_CLIPBOARD: // Show the clipboard toolbar
+				/* This button is NOT a place-push-button, so don't treat it as such */
+				this->HandleButtonClick(WID_ETT_CLIPBOARD);
+				ShowClipboardToolbar();
 				break;
 
 			case WID_ETT_INCREASE_SIZE:

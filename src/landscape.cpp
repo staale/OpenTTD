@@ -15,6 +15,7 @@
 #include "spritecache.h"
 #include "viewport_func.h"
 #include "command_func.h"
+#include "copypaste_cmd.h"
 #include "landscape.h"
 #include "void_map.h"
 #include "tgp.h"
@@ -1397,4 +1398,49 @@ void CallLandscapeTick()
 
 	OnTick_Companies();
 	OnTick_LinkGraph();
+}
+
+void CopyPastePlaceTropicZone(GenericTileIndex tile, TropicZone tropic_zone)
+{
+	if (IsMainMapTile(tile)) {
+		TileIndex t = AsMainMapTile(tile);
+		if (GetTropicZone(t) == tropic_zone) return;
+
+		bool erase_tile = false;
+
+		switch (GetTileType(t)) {
+			case MP_TREES:
+			case MP_CLEAR:
+				/* when changing the tropizone, the ground (type, density) must be reset */
+				erase_tile = true;
+				break;
+			case MP_WATER:
+			case MP_RAILWAY:
+			case MP_ROAD:
+			case MP_TUNNELBRIDGE:
+				/* just switch the tropic zone */
+				break;
+
+			/* TODO: check if it is allowed to change the tropic zone in other cases (station, industry, house, object) */
+
+			default:
+				/* do nothing */
+				return;
+		}
+
+		if (_current_pasting->dc_flags & DC_EXEC) {
+			SetTropicZone(t, tropic_zone);
+			MarkTileDirtyByTile(t);
+		}
+		/* We "did" something, the "there is nothing to do" error no more applies. */
+		_current_pasting->CollectCost(CommandCost(), t);
+
+		if (erase_tile) {
+			_current_pasting->DoCommand(t, 0, 0, CMD_LANDSCAPE_CLEAR | CMD_MSG(STR_ERROR_CAN_T_CLEAR_THIS_AREA));
+			if (_current_pasting->last_result.Failed()) return;
+			if (_current_pasting->dc_flags & DC_EXEC) SetClearDensity(t, 3);
+		}
+	} else {
+		SetTropicZone(tile, tropic_zone);
+	}
 }

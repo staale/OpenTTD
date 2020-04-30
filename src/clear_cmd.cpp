@@ -9,7 +9,10 @@
 
 #include "stdafx.h"
 #include "clear_map.h"
+#include "industry_map.h"
+#include "industry.h"
 #include "command_func.h"
+#include "copypaste_cmd.h"
 #include "landscape.h"
 #include "genworld.h"
 #include "viewport_func.h"
@@ -20,6 +23,8 @@
 #include "table/strings.h"
 #include "table/sprites.h"
 #include "table/clear_land.h"
+
+#include <map>
 
 #include "safeguards.h"
 
@@ -122,6 +127,9 @@ static void DrawTile_Clear(TileInfo *ti)
 		case CLEAR_DESERT:
 			DrawGroundSprite(_clear_land_sprites_snow_desert[GetClearDensity(ti->tile)] + SlopeToSpriteOffset(ti->tileh), PAL_NONE);
 			break;
+
+		default:
+			NOT_REACHED();
 	}
 
 	DrawBridgeMiddle(ti);
@@ -383,6 +391,129 @@ static CommandCost TerraformTile_Clear(TileIndex tile, DoCommandFlag flags, int 
 	return DoCommand(tile, 0, 0, flags, CMD_LANDSCAPE_CLEAR);
 }
 
+void CopyPastePlaceClear(GenericTileIndex tile, ClearGround ground, ClearGround raw_ground, uint density)
+{
+	assert(raw_ground != CLEAR_SNOW && raw_ground < CLEAR_END);
+	assert((ground == CLEAR_SNOW) ? (_settings_game.game_creation.landscape == LT_ARCTIC) : (ground == raw_ground));
+
+	if (IsMainMapTile(tile)) {
+		assert (ground != CLEAR_FIELDS); // fields are handled separately
+
+		TileIndex t = AsMainMapTile(tile);
+		if (IsTileType(t, MP_CLEAR) && ground == GetClearGround(t) && raw_ground == GetRawClearGround(t) && density == GetClearDensity(t)) return;
+
+		_current_pasting->DoCommand(t, 0, 0, CMD_LANDSCAPE_CLEAR | CMD_MSG(STR_ERROR_CAN_T_CLEAR_THIS_AREA));
+		if (_current_pasting->last_result.Failed()) return;
+
+		if (!(_current_pasting->dc_flags & DC_EXEC)) return;
+	}
+
+	MakeClear(tile, raw_ground, density);
+	if (ground == CLEAR_SNOW) MakeSnow(tile, density);
+}
+
+void CopyPastePlaceField(GenericTileIndex tile, uint filed_type, IndustryID industry, uint fence_ne, uint fence_se, uint fence_nw, uint fence_sw)
+{
+	if (IsMainMapTile(tile)) {
+		TileIndex t = AsMainMapTile(tile);
+		if (IsTileType(t, MP_CLEAR) &&
+				GetRawClearGround(t) == CLEAR_FIELDS &&
+				GetFieldType(t) == filed_type &&
+				GetFence(t, DIAGDIR_NE) == fence_ne &&
+				GetFence(t, DIAGDIR_SE) == fence_se &&
+				GetFence(t, DIAGDIR_NW) == fence_nw &&
+				GetFence(t, DIAGDIR_SW) == fence_sw) {
+			return;
+		}
+
+		_current_pasting->DoCommand(t, 0, 0, CMD_LANDSCAPE_CLEAR | CMD_MSG(STR_ERROR_CAN_T_CLEAR_THIS_AREA));
+		if (_current_pasting->last_result.Failed()) return;
+
+		if (!(_current_pasting->dc_flags & DC_EXEC)) return;
+	}
+
+	MakeField(tile, filed_type, industry);
+	SetFence(tile, DIAGDIR_NE, fence_ne);
+	SetFence(tile, DIAGDIR_SE, fence_se);
+	SetFence(tile, DIAGDIR_NW, fence_nw);
+	SetFence(tile, DIAGDIR_SW, fence_sw);
+}
+
+extern const byte _clear_to_tree_ground[6]; // tree_cmd.cpp
+
+void CopyPasteTile_Clear(GenericTileIndex src_tile, GenericTileIndex dst_tile, const CopyPasteParams &copy_paste)
+{
+	if (_game_mode != GM_EDITOR) return;
+	if (!(copy_paste.mode & CPM_WITH_GROUND)) return;
+
+	ClearGround raw_ground = GetRawClearGround(src_tile);
+	/* Ground is set to something invalid when no content has been copied on it. */
+	if (raw_ground >= CLEAR_END) return;
+
+	ClearGround ground = GetClearGround(src_tile);
+	uint density = GetClearDensity(src_tile);
+
+
+	if (IsMainMapTile(dst_tile)) {
+		/* Check if and how can we change the ground of this tile. "Tropic zone" is handled elsewhere. */
+		switch (GetTileType(AsMainMapTile(dst_tile))) {
+			case MP_CLEAR:
+				/* Just change the ground of this "clear" tile. */
+				break;
+
+			case MP_TREES: {
+				/* Clear trees and place fields/rocks. */
+				if (ground == CLEAR_FIELDS || ground == CLEAR_ROCKS) break;
+
+				/* Change only the ground of this "tree" tile (handled by "tree" api). */
+				TreeGround tree_ground;
+				if (ground == CLEAR_SNOW && raw_ground == CLEAR_ROUGH) {
+					tree_ground = TREE_GROUND_ROUGH_SNOW;
+				} else {
+					tree_ground = (TreeGround)_clear_to_tree_ground[ground];
+				}
+				CopyPastePlaceTrees(dst_tile, TREE_INVALID, 0, 0, tree_ground, density);
+				return;
+			}
+
+			default:
+				/* Other tiles can't have different grounds so there is nothing that we can change. */
+				return;
+		}
+	}
+
+	if (ground != CLEAR_FIELDS) {
+		CopyPastePlaceClear(dst_tile, ground, raw_ground, density);
+	} else {
+		IndustryID iid = GetIndustryIndexOfField(src_tile);
+		if (IsMainMapTile(dst_tile) && _current_pasting->dc_flags & DC_EXEC) {
+			extern std::map<IndustryID, IndustryID> _copy_paste_industry_id_paste_map;
+			std::map<IndustryID, IndustryID>::iterator paste_id = _copy_paste_industry_id_paste_map.find(iid);
+			if (paste_id != _copy_paste_industry_id_paste_map.end()) {
+				iid = paste_id->second;
+			} else {
+				iid = INVALID_INDUSTRY;
+				uint best_dist = 21; // this number is related to Industry::~Industry
+				const Industry *industry;
+				for (Industry *industry : Industry::Iterate()) {
+					if ((GetIndustrySpec(industry->type)->behaviour & (INDUSTRYBEH_PLANT_FIELDS | INDUSTRYBEH_PLANT_ON_BUILT)) == 0) continue;
+					uint dist = DistanceMax(industry->location.tile, AsMainMapTile(dst_tile));
+					if (dist >= best_dist) continue;
+					best_dist = dist;
+					iid = industry->index;
+				}
+			}
+		}
+
+		DirTransformation inv_dtr = InvertDirTransform(copy_paste.transformation);
+		CopyPastePlaceField(dst_tile, GetFieldType(src_tile), iid,
+				GetFence(src_tile, TransformDiagDir(DIAGDIR_NE, inv_dtr)),
+				GetFence(src_tile, TransformDiagDir(DIAGDIR_SE, inv_dtr)),
+				GetFence(src_tile, TransformDiagDir(DIAGDIR_NW, inv_dtr)),
+				GetFence(src_tile, TransformDiagDir(DIAGDIR_SW, inv_dtr)));
+	}
+}
+
 extern const TileTypeProcs _tile_type_clear_procs = {
 	DrawTile_Clear,           ///< draw_tile_proc
 	GetSlopePixelZ_Clear,     ///< get_slope_z_proc
@@ -398,4 +529,5 @@ extern const TileTypeProcs _tile_type_clear_procs = {
 	nullptr,                     ///< vehicle_enter_tile_proc
 	GetFoundation_Clear,      ///< get_foundation_proc
 	TerraformTile_Clear,      ///< terraform_tile_proc
+	CopyPasteTile_Clear,      ///< copypaste_tile_proc
 };

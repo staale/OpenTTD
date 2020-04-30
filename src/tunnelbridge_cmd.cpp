@@ -15,6 +15,7 @@
 #include "newgrf_object.h"
 #include "viewport_func.h"
 #include "cmd_helper.h"
+#include "copypaste_cmd.h"
 #include "command_func.h"
 #include "town.h"
 #include "train.h"
@@ -39,6 +40,7 @@
 #include "object_base.h"
 #include "water.h"
 #include "company_gui.h"
+#include "clipboard_gui.h"
 #include "station_func.h"
 
 #include "table/strings.h"
@@ -211,6 +213,24 @@ CommandCost CheckBridgeAvailability(BridgeType bridge_type, uint bridge_len, DoC
 	if (b->min_length > bridge_len) return CMD_ERROR;
 	if (bridge_len <= max) return CommandCost();
 	return_cmd_error(STR_ERROR_BRIDGE_TOO_LONG);
+}
+
+BridgeType FastestAvailableBridgeType(uint bridge_len)
+{
+	BridgeType ret = MAX_BRIDGES;
+	uint max_speed = 0;
+
+	/* loop for all bridgetypes */
+	for (BridgeType brd_type = 0; brd_type != MAX_BRIDGES; brd_type++) {
+		if (CheckBridgeAvailability(brd_type, bridge_len).Failed()) continue;
+		uint speed = GetBridgeSpec(brd_type)->speed;
+		if (max_speed < speed) {
+			max_speed = speed;
+			ret = brd_type;
+		}
+	}
+
+	return ret;
 }
 
 /**
@@ -594,7 +614,7 @@ CommandCost CmdBuildBridge(TileIndex end_tile, DoCommandFlag flags, uint32 p1, u
  * @param flags type of operation
  * @param p1 bit 0-5 railtype or roadtype
  *           bit 8-9 transport type
- * @param p2 unused
+ * @param p2 the end tile (only if DC_PASTE flags is set)
  * @param text unused
  * @return the cost of this operation or an error
  */
@@ -604,8 +624,12 @@ CommandCost CmdBuildTunnel(TileIndex start_tile, DoCommandFlag flags, uint32 p1,
 
 	TransportType transport_type = Extract<TransportType, 8, 2>(p1);
 	RailType railtype = INVALID_RAILTYPE;
+	RoadTypes rts = ROADTYPES_NONE;
 	RoadType roadtype = INVALID_ROADTYPE;
 	_build_tunnel_endtile = 0;
+
+	TileIndex expected_end_tile = (flags & DC_PASTE) ? p2 : (uint32)0;
+
 	switch (transport_type) {
 		case TRANSPORT_RAIL:
 			railtype = Extract<RailType, 0, 6>(p1);
@@ -635,18 +659,39 @@ CommandCost CmdBuildTunnel(TileIndex start_tile, DoCommandFlag flags, uint32 p1,
 	int start_z;
 	int end_z;
 	Slope start_tileh = GetTileSlope(start_tile, &start_z);
-	DiagDirection direction = GetInclinedSlopeDirection(start_tileh);
-	if (direction == INVALID_DIAGDIR) return_cmd_error(STR_ERROR_SITE_UNSUITABLE_FOR_TUNNEL);
+
+	DiagDirection direction;
+	if (expected_end_tile == 0) { // the end tile is given implicitly by the terrain
+		direction = GetInclinedSlopeDirection(start_tileh);
+		if (direction == INVALID_DIAGDIR) return_cmd_error(STR_ERROR_SITE_UNSUITABLE_FOR_TUNNEL);
+	} else { // the end tile is given explicitly
+		direction = DiagdirBetweenTiles(start_tile, expected_end_tile);
+		if (direction == INVALID_DIAGDIR) return CMD_ERROR;
+		if (InclinedSlope(direction) != RemoveHalftileSlope(start_tileh)) return_cmd_error(STR_ERROR_SITE_UNSUITABLE_FOR_TUNNEL);
+	}
 
 	if (HasTileWaterGround(start_tile)) return_cmd_error(STR_ERROR_CAN_T_BUILD_ON_WATER);
 
-	CommandCost ret = DoCommand(start_tile, 0, 0, flags, CMD_LANDSCAPE_CLEAR);
-	if (ret.Failed()) return ret;
+	/* Check if there is already the entrance we are willing to build */
+	bool may_be_already_built =
+			(flags & DC_PASTE) &&
+			IsTileOwner(start_tile, _current_company) &&
+			IsTunnelTile(start_tile) &&
+			GetTunnelBridgeTransportType(start_tile) == transport_type &&
+			GetTunnelBridgeDirection(start_tile) == direction &&
+			(transport_type == TRANSPORT_RAIL ? GetTileRailType(start_tile) == railtype : GetRoadTypes(start_tile) == rts);
 
-	/* XXX - do NOT change 'ret' in the loop, as it is used as the price
-	 * for the clearing of the entrance of the tunnel. Assigning it to
-	 * cost before the loop will yield different costs depending on start-
-	 * position, because of increased-cost-by-length: 'cost += cost >> 3' */
+	/* If the end tile is not given then we have a match already */
+	if (may_be_already_built && expected_end_tile == 0) return_cmd_error(STR_ERROR_ALREADY_BUILT);
+
+	CommandCost cost(EXPENSES_CONSTRUCTION);
+
+	/* Clear the entrance */
+	if (!may_be_already_built) {
+		CommandCost ret = DoCommand(start_tile, 0, 0, flags, CMD_LANDSCAPE_CLEAR);
+		if (ret.Failed()) return ret;
+		cost.AddCost(ret);
+	}
 
 	TileIndexDiff delta = TileOffsByDiagDir(direction);
 	DiagDirection tunnel_in_way_dir;
@@ -665,14 +710,21 @@ CommandCost CmdBuildTunnel(TileIndex start_tile, DoCommandFlag flags, uint32 p1,
 	/* Number of tiles at which the cost increase coefficient per tile is halved */
 	int tiles_bump = 25;
 
-	CommandCost cost(EXPENSES_CONSTRUCTION);
+	/* XXX: The 'ret' is used recursively inside the loop to calculate the cost-by-length:
+	 * 'ret += ret >> 3'  */
+	CommandCost ret;
 	Slope end_tileh;
 	for (;;) {
 		end_tile += delta;
 		if (!IsValidTile(end_tile)) return_cmd_error(STR_ERROR_TUNNEL_THROUGH_MAP_BORDER);
 		end_tileh = GetTileSlope(end_tile, &end_z);
 
-		if (start_z == end_z) break;
+		if (start_z == end_z) break; // end of tunnel
+
+		if (end_tile == expected_end_tile) { // are we getting too far?
+			_build_tunnel_endtile = end_tile;
+			return_cmd_error(STR_ERROR_SITE_UNSUITABLE_FOR_TUNNEL);
+		}
 
 		if (!_cheats.crossing_tunnels.value && IsTunnelInWayDir(end_tile, start_z, tunnel_in_way_dir)) {
 			return_cmd_error(STR_ERROR_ANOTHER_TUNNEL_IN_THE_WAY);
@@ -684,13 +736,24 @@ CommandCost CmdBuildTunnel(TileIndex start_tile, DoCommandFlag flags, uint32 p1,
 			tiles_bump *= 2;
 		}
 
-		cost.AddCost(_price[PR_BUILD_TUNNEL]);
-		cost.AddCost(cost.GetCost() >> tiles_coef); // add a multiplier for longer tunnels
+		ret.AddCost(_price[PR_BUILD_TUNNEL]);
+		ret.AddCost(ret.GetCost() >> tiles_coef); // add a multiplier for longer tunnels
 	}
+
+	/* is the end tile reached? */
+	if (expected_end_tile != 0 && expected_end_tile != end_tile) {
+		if (may_be_already_built) {
+			return_cmd_error(STR_ERROR_MUST_DEMOLISH_TUNNEL_FIRST);
+		} else {
+			return_cmd_error(STR_ERROR_SITE_UNSUITABLE);
+		}
+	}
+
+	/* booth ends match? */
+	if (may_be_already_built) return_cmd_error(STR_ERROR_ALREADY_BUILT);
 
 	/* Add the cost of the entrance */
 	cost.AddCost(_price[PR_BUILD_TUNNEL]);
-	cost.AddCost(ret);
 
 	/* if the command fails from here on we want the end tile to be highlighted */
 	_build_tunnel_endtile = end_tile;
@@ -699,7 +762,7 @@ CommandCost CmdBuildTunnel(TileIndex start_tile, DoCommandFlag flags, uint32 p1,
 
 	if (HasTileWaterGround(end_tile)) return_cmd_error(STR_ERROR_CAN_T_BUILD_ON_WATER);
 
-	/* Clear the tile in any case */
+	/* Clear the end tile in any case */
 	ret = DoCommand(end_tile, 0, 0, flags, CMD_LANDSCAPE_CLEAR);
 	if (ret.Failed()) return_cmd_error(STR_ERROR_UNABLE_TO_EXCAVATE_LAND);
 	cost.AddCost(ret);
@@ -2022,6 +2085,181 @@ static CommandCost TerraformTile_TunnelBridge(TileIndex tile, DoCommandFlag flag
 	return DoCommand(tile, 0, 0, flags, CMD_LANDSCAPE_CLEAR);
 }
 
+void CopyPastePlaceTunnel(GenericTileIndex tile, DiagDirection dir, uint mid_len, TransportType transport_type, uint rail_road_types)
+{
+	GenericTileIndex end_tile = TILE_ADDXY(tile, TileIndexDiffCByDiagDir(dir).x * (mid_len + 1), TileIndexDiffCByDiagDir(dir).y * (mid_len + 1));
+	if (IsMainMapTile(tile)) {
+		_current_pasting->DoCommand(AsMainMapTile(tile), rail_road_types | (transport_type << 8), AsMainMapTile(end_tile), CMD_BUILD_TUNNEL | CMD_MSG(STR_ERROR_CAN_T_BUILD_TUNNEL_HERE));
+		if (_current_pasting->last_result.Failed() && _current_pasting->last_result.GetErrorMessage() == _current_pasting->err_message && _build_tunnel_endtile != 0) {
+			_current_pasting->err_tile = _build_tunnel_endtile;
+		}
+	} else {
+		if (transport_type == TRANSPORT_RAIL) {
+			MakeRailTunnel(tile, OWNER_NONE, dir, (RailType)rail_road_types);
+			MakeRailTunnel(end_tile, OWNER_NONE, ReverseDiagDir(dir), (RailType)rail_road_types);
+		} else {
+			RoadType roadtype = (RoadType) rail_road_types;
+			RoadType road_rt = RoadTypeIsRoad(roadtype) ? roadtype : INVALID_ROADTYPE;
+            RoadType tram_rt = RoadTypeIsTram(roadtype) ? roadtype : INVALID_ROADTYPE;
+			MakeRoadTunnel(tile, OWNER_NONE, dir, road_rt, tram_rt);
+			MakeRoadTunnel(end_tile, OWNER_NONE, ReverseDiagDir(dir), road_rt, tram_rt);
+		}
+	}
+}
+
+void CopyPastePlaceBridge(GenericTileIndex tile, DiagDirection dir, uint mid_len, BridgeType bridgetype, TransportType transport_type, uint rail_road_types)
+{
+	GenericTileIndex end_tile = TILE_ADDXY(tile, TileIndexDiffCByDiagDir(dir).x * (mid_len + 1), TileIndexDiffCByDiagDir(dir).y * (mid_len + 1));
+	if (IsMainMapTile(tile)) {
+		_current_pasting->DoCommand(AsMainMapTile(end_tile), AsMainMapTile(tile), bridgetype | (rail_road_types << 8) | (transport_type << 15), CMD_BUILD_BRIDGE | CMD_MSG(STR_ERROR_CAN_T_BUILD_BRIDGE_HERE));
+	} else {
+		switch (transport_type) {
+			case TRANSPORT_RAIL:
+				MakeRailBridgeRamp(tile, OWNER_NONE, bridgetype, dir, (RailType)rail_road_types);
+				MakeRailBridgeRamp(end_tile, OWNER_NONE, bridgetype, ReverseDiagDir(dir), (RailType)rail_road_types);
+				break;
+
+			case TRANSPORT_ROAD: {
+			    RoadType roadtype = (RoadType) rail_road_types;
+			    RoadType road_rt = RoadTypeIsRoad(roadtype) ? roadtype : INVALID_ROADTYPE;
+                RoadType tram_rt = RoadTypeIsTram(roadtype) ? roadtype : INVALID_ROADTYPE;
+				MakeRoadBridgeRamp(tile, OWNER_NONE, OWNER_NONE, OWNER_NONE, bridgetype, dir, road_rt, tram_rt);
+				MakeRoadBridgeRamp(end_tile, OWNER_NONE, OWNER_NONE, OWNER_NONE, bridgetype, ReverseDiagDir(dir), road_rt, tram_rt);
+			}
+				break;
+
+			case TRANSPORT_WATER:
+				MakeAqueductBridgeRamp(tile, OWNER_NONE, dir);
+				MakeAqueductBridgeRamp(end_tile, OWNER_NONE, ReverseDiagDir(dir));
+				break;
+
+			default:
+				NOT_REACHED();
+		}
+
+		Axis axis = DiagDirToAxis(dir);
+		while (mid_len-- > 0) {
+			tile = TileAddByDiagDir(tile, dir);
+			SetBridgeMiddle(tile, axis);
+		}
+	}
+}
+
+/**
+ * Test a given tunnel/bridge tile if there is any contented to be copied from it.
+ *
+ * Tunnels and bridges can't be copy/pasted tile by tile, we have to do it in one step for all
+ * tiles (booth ends). So the function writes the other end to location pointed by \c other_end
+ * but only once per a tunnel/bridge - when it's northern tile is tested. For the second tile
+ * (second end) it still returns \c true but writes "invalid" tile.
+ *
+ * If the funtion returns \c false, \c object_rect remains unchanged.
+ *
+ * @param tile the tile to test
+ * @param src_area the area we are copying
+ * @param mode copy-paste mode
+ * @param other_end (out, may be NULL) other end or "invalid" tile, depending on which tile of the bridge was given
+ * @param company the #Company that is copying, #INVALID_COMPANY to test against current company
+ * @param preview (out, may be NULL) information on how to higlight preview of the tile
+ * @return whether this tile needs to be copy-pasted
+ */
+bool TestTunnelBridgeTileCopyability(GenericTileIndex tile, const GenericTileArea &src_area, CopyPasteMode mode, GenericTileIndex *other_end, CompanyID company = INVALID_COMPANY, TileContentPastePreview *preview = NULL)
+{
+	/* test ownership */
+	if (!CopyPasteCheckOwnership(tile, company)) return false;
+
+	/* test if tunnel/bridge transport type is enabled in the current copy/paste mode */
+	TransportType tt = GetTunnelBridgeTransportType(tile);
+	switch (tt) {
+		case TRANSPORT_RAIL: if (_game_mode == GM_EDITOR || !(mode & CPM_WITH_RAIL_TRANSPORT)) return false; break;
+		case TRANSPORT_ROAD: if (!(mode & CPM_WITH_ROAD_TRANSPORT)) return false; break;
+		case TRANSPORT_WATER: if (!(mode & CPM_WITH_WATER_TRANSPORT)) return false; break;
+		default: return false;
+	}
+
+	GenericTileIndex end_tile = GetOtherTunnelBridgeEnd(tile);
+	/* test if tunnel/bridge is within copy area */
+	if (!src_area.Contains(end_tile)) return false;
+
+	if (other_end != NULL) *other_end = (tile < end_tile) ? end_tile : GenericTileIndex(INVALID_TILE_INDEX, MapOf(tile)); // copy this tunnel/bridge only once
+
+	if (preview != NULL) {
+		preview->highlight_tile_rect = true;
+		if (tt == TRANSPORT_RAIL) preview->highlight_track_bits = AxisToTrackBits(DiagDirToAxis(GetTunnelBridgeDirection(tile)));
+	}
+
+	return true;
+}
+
+void CopyPasteTile_TunnelBridge(GenericTileIndex src_tile, GenericTileIndex dst_tile, const CopyPasteParams &copy_paste)
+{
+	GenericTileIndex src_other_end;
+	if (!TestTunnelBridgeTileCopyability(src_tile, copy_paste.src_area, copy_paste.mode, &src_other_end)) return; // can we copy the source tunnel/bridge?
+	if (!IsValidTileIndex(src_other_end)) return; // copy-paste this tunnel/bridge only once
+
+	DiagDirection src_dir = GetTunnelBridgeDirection(src_tile);
+	DiagDirection dst_dir = TransformDiagDir(src_dir, copy_paste.transformation);
+	uint mid_len = GetTunnelBridgeLength(src_tile, src_other_end);
+
+	/* Terrafrom tiles if needed */
+	if (IsMainMapTile(dst_tile) && (copy_paste.mode & CPM_TERRAFORM_MASK) == CPM_TERRAFORM_MINIMAL) {
+		/* copy-paste heights around entrances/heads */
+		CopyPasteHeights(GenericTileArea(src_tile, 1, 1), copy_paste);
+		CopyPasteHeights(GenericTileArea(src_other_end, 1, 1), copy_paste);
+
+		/* now level land in the middle */
+		if (mid_len > 1) {
+			TileIndex first_end = AsMainMapTile(dst_tile);
+			TileIndex second_end = first_end + (mid_len + 1) * ToTileIndexDiff(TileIndexDiffCByDiagDir(dst_dir));
+
+			/* Tunnel/bridge tile area to be terraformed. All corners including
+			 * the surronding ones will be leveled. The land around entrances
+			 * is already terraformed so don't include entrance tiles and don't
+			 * include their neigbours. */
+			TileArea leveling_area(first_end, second_end);
+			if (DiagDirToAxis(dst_dir) == AXIS_X) {
+				leveling_area.tile += TileDiffXY(2, 0);
+				leveling_area.w -= 3; // length
+				leveling_area.h += 1;
+			} else {
+				leveling_area.tile += TileDiffXY(0, 2);
+				leveling_area.w += 1;
+				leveling_area.h -= 3; // length
+			}
+
+			/* calculate heights */
+			uint min_height, max_height;
+			if (IsTunnel(src_tile)) {
+				min_height = max<int>(0, GetTileMaxZ(src_tile) + copy_paste.height_delta);
+				max_height = MAX_TILE_HEIGHT;
+			} else {
+				uint bridge_height = GetBridgeHeight(src_tile);
+				max_height = max<int>(0, bridge_height - 1 + copy_paste.height_delta);
+				min_height = max<int>(0, bridge_height - _settings_game.construction.max_bridge_height + copy_paste.height_delta);
+			}
+
+			/* level land */
+			LevelPasteLand(leveling_area, min_height, max_height);
+		}
+	}
+
+	TransportType transport_type = GetTunnelBridgeTransportType(src_tile);
+	uint rail_road_types = 0;
+	switch (transport_type) {
+		case TRANSPORT_RAIL: rail_road_types = (copy_paste.mode & CPM_CONVERT_RAILTYPE) ? copy_paste.railtype : GetRailType(src_tile); break;
+		case TRANSPORT_ROAD: rail_road_types = GetPresentRoadTypes(src_tile); break;
+		default: break;
+	}
+
+	if (IsTunnel(src_tile)) {
+		CopyPastePlaceTunnel(dst_tile, dst_dir, mid_len, transport_type, rail_road_types);
+	} else {
+		BridgeType bridge_type = (copy_paste.mode & CPM_UPGRADE_BRIDGES) ? FastestAvailableBridgeType(mid_len) : GetBridgeType(src_tile);
+		CopyPastePlaceBridge(dst_tile, dst_dir, mid_len, bridge_type, transport_type, rail_road_types);
+	}
+}
+
+
 extern const TileTypeProcs _tile_type_tunnelbridge_procs = {
 	DrawTile_TunnelBridge,           // draw_tile_proc
 	GetSlopePixelZ_TunnelBridge,     // get_slope_z_proc
@@ -2037,4 +2275,5 @@ extern const TileTypeProcs _tile_type_tunnelbridge_procs = {
 	VehicleEnter_TunnelBridge,       // vehicle_enter_tile_proc
 	GetFoundation_TunnelBridge,      // get_foundation_proc
 	TerraformTile_TunnelBridge,      // terraform_tile_proc
+	CopyPasteTile_TunnelBridge,      // copypaste_tile_proc
 };

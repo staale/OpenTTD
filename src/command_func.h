@@ -121,4 +121,7 @@ CommandCallback CcFoundRandomTown;
 CommandCallback CcBuildPrimaryVehicle;
 CommandCallback CcStartStopVehicle;
 
+/* clipboard_gui.cpp */
+CommandCallback CcPaste;
+
 #endif /* COMMAND_FUNC_H */

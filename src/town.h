@@ -194,7 +194,7 @@ enum TownFlags {
 CommandCost CheckforTownRating(DoCommandFlag flags, Town *t, TownRatingCheckType type);
 
 
-TileIndexDiff GetHouseNorthPart(HouseID &house);
+TileIndexDiff GetHouseNorthPart(HouseID &house, Map *map = &_main_map);
 
 Town *CalcClosestTownFromTile(TileIndex tile, uint threshold = UINT_MAX);
 
@@ -209,6 +209,7 @@ void UpdateTownCargoBitmap();
 CommandCost CheckIfAuthorityAllowsNewStation(TileIndex tile, DoCommandFlag flags);
 Town *ClosestTownFromTile(TileIndex tile, uint threshold);
 void ChangeTownRating(Town *t, int add, int max, DoCommandFlag flags);
+HouseZonesBits TryGetTownRadiusGroup(const Town *t, TileIndex tile);
 HouseZonesBits GetTownRadiusGroup(const Town *t, TileIndex tile);
 void SetTownRatingTestMode(bool mode);
 uint GetMaskOfTownActions(int *nump, CompanyID cid, const Town *t);

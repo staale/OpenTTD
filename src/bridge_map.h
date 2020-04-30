@@ -21,10 +21,11 @@
  * @pre IsTileType(t, MP_TUNNELBRIDGE)
  * @return true if the structure is a bridge one
  */
-static inline bool IsBridge(TileIndex t)
+template <typename Tindex>
+static inline bool IsBridge(const Tindex &t)
 {
 	assert(IsTileType(t, MP_TUNNELBRIDGE));
-	return HasBit(_m[t].m5, 7);
+	return HasBit(GetTile(t)->m5, 7);
 }
 
 /**
@@ -32,7 +33,8 @@ static inline bool IsBridge(TileIndex t)
  * @param t The tile to analyze
  * @return true if a bridge is present
  */
-static inline bool IsBridgeTile(TileIndex t)
+template <typename Tindex>
+static inline bool IsBridgeTile(const Tindex &t)
 {
 	return IsTileType(t, MP_TUNNELBRIDGE) && IsBridge(t);
 }
@@ -42,9 +44,10 @@ static inline bool IsBridgeTile(TileIndex t)
  * @param t The tile to analyze
  * @return true if a bridge is detected above
  */
-static inline bool IsBridgeAbove(TileIndex t)
+template <typename Tindex>
+static inline bool IsBridgeAbove(const Tindex &t)
 {
-	return GB(_m[t].type, 2, 2) != 0;
+	return GB(GetTile(t)->type, 2, 2) != 0;
 }
 
 /**
@@ -53,10 +56,11 @@ static inline bool IsBridgeAbove(TileIndex t)
  * @pre IsBridgeTile(t)
  * @return The bridge type
  */
-static inline BridgeType GetBridgeType(TileIndex t)
+template <typename Tindex>
+static inline BridgeType GetBridgeType(const Tindex &t)
 {
 	assert(IsBridgeTile(t));
-	return GB(_me[t].m6, 2, 4);
+	return GB(GetTileEx(t)->m6, 2, 4);
 }
 
 /**
@@ -65,17 +69,21 @@ static inline BridgeType GetBridgeType(TileIndex t)
  * @pre IsBridgeAbove(t)
  * @return the above mentioned axis
  */
-static inline Axis GetBridgeAxis(TileIndex t)
+template <typename Tindex>
+static inline Axis GetBridgeAxis(const Tindex &t)
 {
 	assert(IsBridgeAbove(t));
-	return (Axis)(GB(_m[t].type, 2, 2) - 1);
+	return (Axis)(GB(GetTile(t)->type, 2, 2) - 1);
 }
 
 TileIndex GetNorthernBridgeEnd(TileIndex t);
 TileIndex GetSouthernBridgeEnd(TileIndex t);
-TileIndex GetOtherBridgeEnd(TileIndex t);
 
-int GetBridgeHeight(TileIndex tile);
+TileIndex GetOtherBridgeEnd(TileIndex t);
+GenericTileIndex GetOtherBridgeEnd(GenericTileIndex t);
+
+int GetBridgeHeight(TileIndex t);
+int GetBridgeHeight(GenericTileIndex t);
 /**
  * Get the height ('z') of a bridge in pixels.
  * @param tile the bridge ramp tile to get the bridge height from
@@ -93,7 +101,7 @@ static inline int GetBridgePixelHeight(TileIndex tile)
  */
 static inline void ClearSingleBridgeMiddle(TileIndex t, Axis a)
 {
-	ClrBit(_m[t].type, 2 + a);
+	ClrBit(GetTile(t)->type, 2 + a);
 }
 
 /**
@@ -111,9 +119,10 @@ static inline void ClearBridgeMiddle(TileIndex t)
  * @param t the tile to add the bridge to
  * @param a the axis of the bridge to add
  */
-static inline void SetBridgeMiddle(TileIndex t, Axis a)
+template <typename Tindex>
+static inline void SetBridgeMiddle(const Tindex &t, Axis a)
 {
-	SetBit(_m[t].type, 2 + a);
+	SetBit(GetTile(t)->type, 2 + a);
 }
 
 /**
@@ -125,18 +134,19 @@ static inline void SetBridgeMiddle(TileIndex t, Axis a)
  * @param tt         the transport type of the bridge
  * @note this function should not be called directly.
  */
-static inline void MakeBridgeRamp(TileIndex t, Owner o, BridgeType bridgetype, DiagDirection d, TransportType tt)
+template <typename Tindex>
+static inline void MakeBridgeRamp(const Tindex &t, Owner o, BridgeType bridgetype, DiagDirection d, TransportType tt)
 {
 	SetTileType(t, MP_TUNNELBRIDGE);
 	SetTileOwner(t, o);
 	SetDockingTile(t, false);
-	_m[t].m2 = 0;
-	_m[t].m3 = 0;
-	_m[t].m4 = INVALID_ROADTYPE;
-	_m[t].m5 = 1 << 7 | tt << 2 | d;
-	SB(_me[t].m6, 2, 4, bridgetype);
-	_me[t].m7 = 0;
-	_me[t].m8 = INVALID_ROADTYPE << 6;
+	GetTile(t)->m2 = 0;
+	GetTile(t)->m3 = 0;
+	GetTile(t)->m4 = INVALID_ROADTYPE;
+	GetTile(t)->m5 = 1 << 7 | tt << 2 | d;
+	SB(GetTileEx(t)->m6, 2, 4, bridgetype);
+	GetTileEx(t)->m7 = 0;
+	GetTileEx(t)->m8 = INVALID_ROADTYPE << 6;
 }
 
 /**
@@ -150,7 +160,8 @@ static inline void MakeBridgeRamp(TileIndex t, Owner o, BridgeType bridgetype, D
  * @param road_rt    the road type of the bridge
  * @param tram_rt    the tram type of the bridge
  */
-static inline void MakeRoadBridgeRamp(TileIndex t, Owner o, Owner owner_road, Owner owner_tram, BridgeType bridgetype, DiagDirection d, RoadType road_rt, RoadType tram_rt)
+template <typename Tindex>
+static inline void MakeRoadBridgeRamp(const Tindex &t, Owner o, Owner owner_road, Owner owner_tram, BridgeType bridgetype, DiagDirection d, RoadType road_rt, RoadType tram_rt)
 {
 	MakeBridgeRamp(t, o, bridgetype, d, TRANSPORT_ROAD);
 	SetRoadOwner(t, RTT_ROAD, owner_road);
@@ -166,7 +177,8 @@ static inline void MakeRoadBridgeRamp(TileIndex t, Owner o, Owner owner_road, Ow
  * @param d          the direction this ramp must be facing
  * @param rt         the rail type of the bridge
  */
-static inline void MakeRailBridgeRamp(TileIndex t, Owner o, BridgeType bridgetype, DiagDirection d, RailType rt)
+template <typename Tindex>
+static inline void MakeRailBridgeRamp(const Tindex &t, Owner o, BridgeType bridgetype, DiagDirection d, RailType rt)
 {
 	MakeBridgeRamp(t, o, bridgetype, d, TRANSPORT_RAIL);
 	SetRailType(t, rt);
@@ -178,7 +190,8 @@ static inline void MakeRailBridgeRamp(TileIndex t, Owner o, BridgeType bridgetyp
  * @param o          the new owner of the bridge ramp
  * @param d          the direction this ramp must be facing
  */
-static inline void MakeAqueductBridgeRamp(TileIndex t, Owner o, DiagDirection d)
+template <typename Tindex>
+static inline void MakeAqueductBridgeRamp(const Tindex &t, Owner o, DiagDirection d)
 {
 	MakeBridgeRamp(t, o, 0, d, TRANSPORT_WATER);
 }

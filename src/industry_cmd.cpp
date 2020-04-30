@@ -12,8 +12,12 @@
 #include "industry.h"
 #include "station_base.h"
 #include "landscape.h"
+#include "tilearea_func.h"
 #include "viewport_func.h"
 #include "command_func.h"
+#include "copypaste_cmd.h"
+#include "clipboard_func.h"
+#include "clipboard_gui.h"
 #include "town.h"
 #include "news_func.h"
 #include "cheat_type.h"
@@ -39,6 +43,7 @@
 #include "object_base.h"
 #include "game/game.hpp"
 #include "error.h"
+#include "network/network.h"
 
 #include "table/strings.h"
 #include "table/industry_land.h"
@@ -60,6 +65,10 @@ uint16 Industry::counts[NUM_INDUSTRYTYPES];
 IndustrySpec _industry_specs[NUM_INDUSTRYTYPES];
 IndustryTileSpec _industry_tile_specs[NUM_INDUSTRYTILES];
 IndustryBuildData _industry_builder; ///< In-game manager of industries.
+
+IndustryID _last_industry_id = INVALID_INDUSTRY; ///< ID of the last constructed industry
+
+std::map<IndustryID, IndustryID> _copy_paste_industry_id_paste_map; ///< Maps source to destination industry IDs while pasting.
 
 /**
  * This function initialize the spec arrays of both
@@ -2987,6 +2996,161 @@ static CommandCost TerraformTile_Industry(TileIndex tile, DoCommandFlag flags, i
 	return DoCommand(tile, 0, 0, flags, CMD_LANDSCAPE_CLEAR);
 }
 
+static ClipboardIndustriesBuilder _clipboard_industries_builder; ///< for collecting data about industries
+
+static void GetTypeLayoutFromGenericIndustry(GenericTileIndex tile, IndustryType *type, byte *selected_layout)
+{
+	if (IsMainMapTile(tile)) {
+		const Industry *industry = Industry::GetByTile(AsMainMapTile(tile));
+		*type = industry->type;
+		*selected_layout = industry->selected_layout;
+	} else {
+		const ClipboardIndustry *industry = ClipboardIndustry::GetByTile(tile);
+		*type = industry->type;
+		*selected_layout = industry->selected_layout;
+	}
+}
+
+static GenericTileArea GetLocationFromGenericIndustry(GenericTileIndex tile)
+{
+	if (IsMainMapTile(tile)) {
+		return Industry::GetByTile(AsMainMapTile(tile))->location;
+	} else {
+		return GenericTileArea(ClipboardIndustry::GetByTile(tile)->location, MapOf(tile));
+	}
+}
+
+bool TestIndustryTileCopyability(GenericTileIndex tile, const GenericTileArea &src_area, CopyPasteMode mode, GenericTileArea *industry_rect, TileContentPastePreview *preview = NULL)
+{
+	if (_game_mode != GM_EDITOR) return false;
+	if (!(mode & CPM_WITH_INDUSTRIES)) return false;
+
+	GenericTileArea ta = GetLocationFromGenericIndustry(tile);
+	if (!src_area.Contains(ta)) return false;
+
+	if (industry_rect != NULL) {
+		IndustryType type;
+		byte selected_layout;
+		GetTypeLayoutFromGenericIndustry(tile, &type, &selected_layout);
+
+		/* Find out if we are at the first tile of the industry. */
+		bool is_first_industry_tile = false;
+		if (selected_layout > 0) {
+			/* Decode the layout. "selected_layout == 0" means that industry was created
+			 * prior of newindustries (r10903). Otherwise "selected_layout == layout + 1".
+			 * See DoCreateNewIndustry. */
+			byte layout = selected_layout - 1;
+			/* Test if we are at the first tile of the industry layout table. */
+			TileIndexDiffC offset = GetIndustrySpec(type)->layouts[0][0].ti;
+			is_first_industry_tile = (tile == TILE_ADDXY(ta.tile, offset.x, offset.y));
+		} else {
+			/* Loop over industry area and test if the 'tile' is the first tile of this industry. */
+			IndustryID iid = GetIndustryIndex(tile);
+			GENERIC_TILE_AREA_LOOP(ti, ta) {
+				if ((GenericTileIndex)ti > tile) break;
+				if (IsTileType(ti, MP_INDUSTRY) && GetIndustryIndex(ti) == iid) {
+					is_first_industry_tile = ((GenericTileIndex)ti == tile);
+					break;
+				}
+			}
+		}
+
+		if (is_first_industry_tile) {
+			*industry_rect = ta;
+		} else {
+			*industry_rect = GenericTileArea(GenericTileIndex(INVALID_TILE_INDEX, MapOf(tile)), 0, 0);
+		}
+	}
+
+	if (preview != NULL) preview->highlight_tile_rect = true;
+	return true;
+}
+
+void CopyPasteTile_Industry(GenericTileIndex src_tile, GenericTileIndex dst_tile, const CopyPasteParams &copy_paste)
+{
+	GenericTileArea src_rect;
+	if (!TestIndustryTileCopyability(src_tile, copy_paste.src_area, copy_paste.mode, &src_rect)) return;
+
+	if (IsMainMapTile(dst_tile)) {
+		/* paste this industry only once */
+		if (!IsValidTileIndex(src_rect.tile)) return;
+
+		/* terraform tiles */
+		if ((copy_paste.mode & CPM_TERRAFORM_MASK) == CPM_TERRAFORM_MINIMAL) {
+			CopyPasteHeights(src_rect, copy_paste);
+		}
+	}
+
+	IndustryID src_id = GetIndustryIndex(src_tile);
+
+	IndustryType type;
+	byte selected_layout;
+	GetTypeLayoutFromGenericIndustry(src_tile, &type, &selected_layout);
+	/* TODO: add industry layout transformation table to NewGRF spec. so
+	 * NewGRF creator can decide how an industry can be transformed. */
+
+	uint16 random = IsMainMapTile(src_tile) ?
+			Industry::GetByTile(AsMainMapTile(src_tile))->random :
+			ClipboardIndustry::GetByTile(src_tile)->random;
+
+	GenericTileArea dst_rect = IsValidTileIndex(src_rect.tile) ?
+			TransformTileArea(src_rect, copy_paste.TileTransform(), MapOf(dst_tile)) :
+			GenericTileArea(GenericTileIndex(INVALID_TILE_INDEX, MapOf(dst_tile)), 0, 0);
+
+	if (IsMainMapTile(dst_tile)) {
+		/* The industry that we are copying was created using some random bits.
+		 * While some of them are known (Industry::random), we can't tell what
+		 * were the others (e.g. those passed to the CBID_INDUSTRY_LOCATION
+		 * callback (CB 28). We need to generate new random bits now - use
+		 * InteractiveRandom for the purpose. The bits will be different while
+		 * in non-DC_EXEC stage of copy/paste command and different while in
+		 * DC_EXEC stage. This can lead to less accurate cost prediction when
+		 * shift-clicking which is a non-issue in scenario editor. We don't have
+		 * to care about desyncs too as we are not netwoking. */
+		assert(!_networking);
+		uint32 fresh_random = InteractiveRandom();
+
+		/* Decode the layout. "selected_layout == 0" means that industry was created
+		 * prior of newindustries (r10903). Otherwise "selected_layout == layout + 1".
+		 * See DoCreateNewIndustry. */
+		uint layout = (selected_layout > 0) ? (selected_layout - 1) : (fresh_random % GetIndustrySpec(type)->layouts.size());
+		/* CMD_BUILD_INDUSTRY actually cycles through layouts starting form the
+		 * successor of the given one so we need to pass the predecessor.
+		 * See CmdBuildIndustry. */
+		layout = (layout > 0) ? (layout - 1) : (GetIndustrySpec(type)->layouts.size() - 1);
+
+		uint32 p1 = 0;
+		SB(p1, 0, 8, type);
+		SB(p1, 8, 8, layout);
+		SetBit(p1, 16); // fund, not prospect
+		uint32 p2 = 0;
+		SB(p2, 0, 16, random);
+		SB(p2, 16, 16, GB(fresh_random, 16, 16));
+
+		_current_pasting->DoCommand(AsMainMapTile(dst_rect.tile), p1, p2, CMD_BUILD_INDUSTRY | CMD_MSG(STR_ERROR_CAN_T_CONSTRUCT_THIS_INDUSTRY));
+
+		if ((_current_pasting->dc_flags & DC_EXEC) && _current_pasting->last_result.Succeeded()) {
+			_copy_paste_industry_id_paste_map[src_id] = _last_industry_id;
+		}
+	} else {
+		MakeIndustry(dst_tile, src_id, 0, 0, WATER_CLASS_INVALID);
+		if (IsValidTileIndex(src_rect.tile)) {
+			RawTileArea raw_dst_rect = { IndexOf(dst_rect.tile), dst_rect.w, dst_rect.h };
+			_clipboard_industries_builder.Add(src_id, type, raw_dst_rect, selected_layout, random);
+		}
+	}
+}
+
+void AfterPastingIndustries()
+{
+	_copy_paste_industry_id_paste_map.clear();
+}
+
+void AfterCopyingIndustries(const CopyPasteParams &copy_paste)
+{
+	_clipboard_industries_builder.BuildDone(MapOf(copy_paste.dst_area.tile));
+}
+
 extern const TileTypeProcs _tile_type_industry_procs = {
 	DrawTile_Industry,           // draw_tile_proc
 	GetSlopePixelZ_Industry,     // get_slope_z_proc
@@ -3002,6 +3166,7 @@ extern const TileTypeProcs _tile_type_industry_procs = {
 	nullptr,                        // vehicle_enter_tile_proc
 	GetFoundation_Industry,      // get_foundation_proc
 	TerraformTile_Industry,      // terraform_tile_proc
+	CopyPasteTile_Industry,      // copypaste_tile_proc
 };
 
 bool IndustryCompare::operator() (const Industry *lhs, const Industry *rhs) const

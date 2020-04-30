@@ -15,7 +15,9 @@
 #include "viewport_func.h"
 #include "viewport_kdtree.h"
 #include "cmd_helper.h"
+#include "copypaste_cmd.h"
 #include "command_func.h"
+#include "clipboard_gui.h"
 #include "industry.h"
 #include "station_base.h"
 #include "station_kdtree.h"
@@ -2188,22 +2190,42 @@ bool GenerateTowns(TownLayout layout)
 
 /**
  * Returns the bit corresponding to the town zone of the specified tile
+ * or #HZB_END if the tile is ouside of the town.
+ *
  * @param t Town on which town zone is to be found
  * @param tile TileIndex where town zone needs to be found
  * @return the bit position of the given zone, as defined in HouseZones
+ *
+ * @see GetTownRadiusGroup
  */
-HouseZonesBits GetTownRadiusGroup(const Town *t, TileIndex tile)
+HouseZonesBits TryGetTownRadiusGroup(const Town *t, TileIndex tile)
 {
 	uint dist = DistanceSquare(tile, t->xy);
 
 	if (t->fund_buildings_months && dist <= 25) return HZB_TOWN_CENTRE;
 
-	HouseZonesBits smallest = HZB_TOWN_EDGE;
+	HouseZonesBits smallest = HZB_END;
 	for (HouseZonesBits i = HZB_BEGIN; i < HZB_END; i++) {
 		if (dist < t->cache.squared_town_zone_radius[i]) smallest = i;
 	}
 
 	return smallest;
+}
+
+/**
+ * Returns the bit corresponding to the town zone of the specified tile.
+ * Returns #HZB_TOWN_EDGE if the tile is either in an edge zone or ouside of the town.
+ *
+ * @param t Town on which town zone is to be found
+ * @param tile TileIndex where town zone needs to be found
+ * @return the bit position of the given zone, as defined in HouseZones
+ *
+ * @see TryGetTownRadiusGroup
+ */
+HouseZonesBits GetTownRadiusGroup(const Town *t, TileIndex tile)
+{
+	HouseZonesBits ret = TryGetTownRadiusGroup(t, tile);
+	return ret != HZB_END ? ret : HZB_TOWN_EDGE;
 }
 
 /**
@@ -2280,6 +2302,313 @@ static inline bool CanBuildHouseHere(TileIndex tile, bool noslope)
 /**
  * Checks if a house can be built at this tile, must have the same max z as parameter.
  * @param tile tile to check
+ * @param noslope are slopes (foundations) allowed?
+ * @return success if house can be built here, error message otherwise
+ */
+static inline CommandCost CanBuildHouseHere(TileIndex tile, TownID town, bool noslope)
+{
+	/* cannot build on these slopes... */
+	if (noslope) {
+		if (!IsTileFlat(tile)) return_cmd_error(STR_ERROR_FLAT_LAND_REQUIRED);
+	} else {
+		if (IsSteepSlope(GetTileSlope(tile))) return_cmd_error(STR_ERROR_LAND_SLOPED_IN_WRONG_DIRECTION);
+	}
+
+	/* building under a bridge? */
+	if (IsBridgeAbove(tile)) return_cmd_error(STR_ERROR_MUST_DEMOLISH_BRIDGE_FIRST);
+
+	/* can we clear the land? */
+	CommandCost ret = DoCommand(tile, 0, 0, DC_AUTO | DC_NO_WATER, CMD_LANDSCAPE_CLEAR);
+	if (ret.Failed()) return ret;
+
+	/* do not try to build over house owned by another town */
+	if (IsTileType(tile, MP_HOUSE) && GetTownIndex(tile) != town) return CMD_ERROR;
+
+	return CommandCost();
+}
+
+
+/**
+ * Checks if a house can be built here. Important is slope, bridge above
+ * and ability to clear the land.
+ *
+ * @param ta tile area to check
+ * @param maxz z level of the house, check if all tiles have this max z level
+ * @param noslope are slopes (foundations) allowed?
+ * @return success if house can be built here, error message otherwise
+ *
+ * @see TownLayoutAllowsHouseHere
+ */
+static inline CommandCost CanBuildHouseHere(const TileArea &ta, TownID town, int maxz, bool noslope)
+{
+
+	TILE_AREA_LOOP(tile, ta) {
+		CommandCost ret = CanBuildHouseHere(tile, town, noslope);
+		/* if building on slopes is allowed, there will be flattening foundation (to tile max z) */
+		if (ret.Succeeded() && GetTileMaxZ(tile) != maxz) ret = CommandCost(STR_ERROR_LAND_SLOPED_IN_WRONG_DIRECTION);
+		if (ret.Failed()) return ret;
+	}
+
+	return CommandCost();
+}
+
+/**
+ * Test whether houses of given type are avaliable in current game.
+ *
+ * The function will check whether the house is available at all e.g. is not overriden.
+ * Also availability for current climate and given house zone will be tested.
+ *
+ * @param house house type
+ * @param above_snowline true to test availability above the snow line, false for below (arctic climate only)
+ * @return success if house is avaliable, error message otherwise
+ */
+static inline CommandCost IsHouseTypeAllowed(HouseID house, bool above_snowline)
+{
+	const HouseSpec *hs = HouseSpec::Get(house);
+	/* Disallow disabled and replaced houses. */
+	if (!hs->enabled || hs->grf_prop.override != INVALID_HOUSE_ID) return CMD_ERROR;
+
+	/* Check if we can build this house in current climate. */
+	if (_settings_game.game_creation.landscape != LT_ARCTIC) {
+		if (!(hs->building_availability & (HZ_TEMP << _settings_game.game_creation.landscape))) return CMD_ERROR;
+	} else if (above_snowline) {
+		if (!(hs->building_availability & HZ_SUBARTC_ABOVE)) return_cmd_error(STR_ERROR_BUILDING_NOT_ALLOWED_ABOVE_SNOW_LINE);
+	} else {
+		if (!(hs->building_availability & HZ_SUBARTC_BELOW)) return_cmd_error(STR_ERROR_BUILDING_NOT_ALLOWED_BELOW_SNOW_LINE);
+	}
+
+	return CommandCost();
+ }
+
+
+/**
+ * Check whether a town can hold more house types.
+ * @param t the town we wan't to check
+ * @param house type of the house we wan't to add
+ * @return success if houses of this type are allowed, error message otherwise
+ */
+static inline CommandCost IsAnotherHouseTypeAllowedInTown(Town *t, HouseID house)
+{
+	const HouseSpec *hs = HouseSpec::Get(house);
+
+	/* Don't let these counters overflow. Global counters are 32bit, there will never be that many houses. */
+	if (hs->class_id != HOUSE_NO_CLASS) {
+		/* id_count is always <= class_count, so it doesn't need to be checked */
+		if (t->cache.building_counts.class_count[hs->class_id] == UINT16_MAX) return_cmd_error(STR_ERROR_TOO_MANY_HOUSE_SETS);
+	} else {
+		/* If the house has no class, check id_count instead */
+		if (t->cache.building_counts.id_count[house] == UINT16_MAX) return_cmd_error(STR_ERROR_TOO_MANY_HOUSE_TYPES);
+	}
+
+	return CommandCost();
+}
+
+
+/**
+ * Checks if current town layout allows building here
+ * @param t town
+ * @param ta tile area to check
+ * @return true iff town layout allows building here
+ * @note see layouts
+ */
+static inline bool TownLayoutAllowsHouseHere(Town *t, const TileArea &ta)
+{
+	/* Allow towns everywhere when we don't build roads */
+	if (!_settings_game.economy.allow_town_roads && !_generating_world) return true;
+	if (t->layout != TL_2X2_GRID && t->layout != TL_3X3_GRID) return true;
+
+	/* We will check whether the area is not intersecting with the town grid. We need
+	 * to measure distance to some known intersection of the grid - it could be the
+	 * center of the town. However, for simpler calculations we can choose any other
+	 * grid crossing. Choose some other point by adding an offset, big enough to get
+	 * a non-negative distance x and y. The offset divides by 3 and 4 (grid sizes) so
+	 * it won't affect our modular arithmetic calculations. */
+	const uint OFFSET = 3 * 4 * MAX_MAP_SIZE;
+	uint x = TileX(t->xy) + OFFSET - TileX(ta.tile);
+	uint y = TileY(t->xy) + OFFSET - TileY(ta.tile);
+	/* Now check if the area fits into the grid. */
+
+	switch (t->layout) {
+		case TL_2X2_GRID: return ta.w <= x % 3 && ta.h <= y % 3;
+		case TL_3X3_GRID: return ta.w <= x % 4 && ta.h <= y % 4;
+		default: NOT_REACHED();
+	}
+}
+
+/**
++ * Find a suitable place (free of any obstacles) for a new town house. Search around a given location
++ * taking into account the layout of the town.
++ *
++ * @param tile tile that must be included by the building
++ * @param t the town we are building in
++ * @param house house type
++ * @return where the building can be placed, INVALID_TILE if no lacation was found
++ *
++ * @pre CanBuildHouseHere(tile, t->index, false)
++ *
++ * @see CanBuildHouseHere
++ */
+static TileIndex FindPlaceForTownHouseAroundTile(TileIndex tile, Town *t, HouseID house)
+{
+	const HouseSpec *hs = HouseSpec::Get(house);
+	bool noslope = (hs->building_flags & TILE_NOT_SLOPED) != 0;
+
+	TileArea ta(tile, 1, 1);
+	DiagDirection dir;
+	uint count;
+	if (hs->building_flags & TILE_SIZE_2x2) {
+		ta.w = ta.h = 2;
+		dir = DIAGDIR_NW; // 'd' goes through DIAGDIR_NW, DIAGDIR_NE, DIAGDIR_SE
+		count = 4;
+	} else if (hs->building_flags & TILE_SIZE_2x1) {
+		ta.w = 2;
+		dir = DIAGDIR_NE;
+		count = 2;
+	} else if (hs->building_flags & TILE_SIZE_1x2) {
+		ta.h = 2;
+		dir = DIAGDIR_NW;
+		count = 2;
+	} else { // TILE_SIZE_1x1
+		/* CanBuildHouseHere(tile, t->index, false) already checked */
+		if (noslope && !IsTileFlat(tile)) return INVALID_TILE;
+		return tile;
+		}
+
+	int maxz = GetTileMaxZ(tile);
+	/* Drift around the tile and find a place for the house. For 1x2 and 2x1 houses just two
+	 * positions will be checked (at the exact tile and the other). In case of 2x2 houses
+	 * 4 positions have to be checked (clockwise). */
+	while (count-- > 0) {
+		if (!TownLayoutAllowsHouseHere(t, ta)) continue;
+		if (CanBuildHouseHere(ta, t->index, maxz, noslope).Succeeded()) return ta.tile;
+		ta.tile += TileOffsByDiagDir(dir);
+		dir = ChangeDiagDir(dir, DIAGDIRDIFF_90RIGHT);
+	}
+
+	return INVALID_TILE;
+}
+
+/**
+ * Check if a given house can be built in a given town.
+ * @param house house type
+ * @param t the town
+ * @return success if house can be built, error message otherwise
+ */
+static CommandCost CheckCanBuildHouse(HouseID house, const Town *t)
+{
+	const HouseSpec *hs = HouseSpec::Get(house);
+	if (_loaded_newgrf_features.has_newhouses && !_generating_world &&
+			_game_mode != GM_EDITOR && (hs->extra_flags & BUILDING_IS_HISTORICAL) != 0) {
+		return CMD_ERROR;
+	}
+
+	if (_cur_year > hs->max_year) return_cmd_error(STR_ERROR_BUILDING_IS_TOO_OLD);
+	if (_cur_year < hs->min_year) return_cmd_error(STR_ERROR_BUILDING_IS_TOO_MODERN);
+
+	/* Special houses that there can be only one of. */
+	if (hs->building_flags & BUILDING_IS_CHURCH) {
+		if (HasBit(t->flags, TOWN_HAS_CHURCH)) return_cmd_error(STR_ERROR_ONLY_ONE_BUILDING_ALLOWED_PER_TOWN);
+	} else if (hs->building_flags & BUILDING_IS_STADIUM) {
+		if (HasBit(t->flags, TOWN_HAS_STADIUM)) return_cmd_error(STR_ERROR_ONLY_ONE_BUILDING_ALLOWED_PER_TOWN);
+	}
+
+	return CommandCost();
+}
+
+
+/**
+ * Really build a house.
+ * @param t town to build house in
+ * @param tile house location
+ * @param house house type
+ * @param random_bits random bits for the house
+ */
+static void DoBuildHouse(Town *t, TileIndex tile, HouseID house, byte random_bits)
+{
+	t->cache.num_houses++;
+
+	const HouseSpec *hs = HouseSpec::Get(house);
+
+	/* Special houses that there can be only one of. */
+	if (hs->building_flags & BUILDING_IS_CHURCH) {
+		SetBit(t->flags, TOWN_HAS_CHURCH);
+	} else if (hs->building_flags & BUILDING_IS_STADIUM) {
+		SetBit(t->flags, TOWN_HAS_STADIUM);
+	}
+
+	byte construction_counter = 0;
+	byte construction_stage = 0;
+
+	if (_generating_world || _game_mode == GM_EDITOR) {
+		uint32 r = Random();
+
+		construction_stage = TOWN_HOUSE_COMPLETED;
+		if (Chance16(1, 7)) construction_stage = GB(r, 0, 2);
+
+		if (construction_stage == TOWN_HOUSE_COMPLETED) {
+			ChangePopulation(t, hs->population);
+		} else {
+			construction_counter = GB(r, 2, 2);
+		}
+	}
+
+	MakeTownHouse(tile, t, construction_counter, construction_stage, house, random_bits);
+	UpdateTownRadius(t);
+	UpdateTownCargoes(t, tile);
+}
+
+
+/**
+ * Place a custom house
+ * @param tile tile where the house will be located
+ * @param flags flags for the command
+ * @param p1 \n
+ *    bits  0..15 - the HouseID of the house \n
+ *    bits 16..31 - the TownID of the town \n
+ * @param p2 \n
+ *    bits  0..7  - random bits \n
+ * @param text unused
+ * @return the cost of this operation or an error
+ */
+CommandCost CmdBuildHouse(TileIndex tile, DoCommandFlag flags, uint32 p1, uint32 p2, const char *text)
+{
+	if (_game_mode != GM_EDITOR && // in scenario editor anyone can build a house
+			_current_company != OWNER_TOWN && // towns naturally can build houses
+			_current_company != OWNER_DEITY) { // GameScript can place a house too
+		return CMD_ERROR;
+	}
+
+	HouseID house = GB(p1, 0, 16);
+	Town *t = Town::Get(GB(p1, 16, 16));
+	if (t == NULL) return CMD_ERROR;
+	byte random_bits = GB(p2, 0, 8);
+
+	int max_z = GetTileMaxZ(tile);
+	bool above_snowline = (_settings_game.game_creation.landscape == LT_ARCTIC) && (max_z > HighestSnowLine());
+
+	CommandCost          ret = IsHouseTypeAllowed(house, above_snowline);
+	if (ret.Succeeded()) ret = IsAnotherHouseTypeAllowedInTown(t, house);
+	if (ret.Succeeded()) ret = CheckCanBuildHouse(house, t);
+	if (ret.Succeeded()) {
+		/* While placing a house manually, try only at exact position and ignore the layout */
+		const HouseSpec *hs = HouseSpec::Get(house);
+		uint w = hs->building_flags & BUILDING_2_TILES_X ? 2 : 1;
+		uint h = hs->building_flags & BUILDING_2_TILES_Y ? 2 : 1;
+		bool noslope = (hs->building_flags & TILE_NOT_SLOPED) != 0;
+		ret = CanBuildHouseHere(TileArea(tile, w, h), t->index, max_z, noslope);
+	}
+	if (ret.Failed()) return ret;
+	/* Check if GRF allows this house */
+	if (!HouseAllowsConstruction(house, tile, t, random_bits)) return_cmd_error(STR_ERROR_BUILDING_NOT_ALLOWED);
+
+	if (flags & DC_EXEC) DoBuildHouse(t, tile, house, random_bits);
+	return CommandCost();
+}
+
+
+/**
+ * Checks if a house can be built at this tile, must have the same max z as parameter.
+ * @param tile tile to check
  * @param z max z of this tile so more parts of a house are at the same height (with foundation)
  * @param noslope are slopes (foundations) allowed?
  * @return true iff house can be built here
@@ -2287,12 +2616,12 @@ static inline bool CanBuildHouseHere(TileIndex tile, bool noslope)
  */
 static inline bool CheckBuildHouseSameZ(TileIndex tile, int z, bool noslope)
 {
-	if (!CanBuildHouseHere(tile, noslope)) return false;
+        if (!CanBuildHouseHere(tile, noslope)) return false;
 
-	/* if building on slopes is allowed, there will be flattening foundation (to tile max z) */
-	if (GetTileMaxZ(tile) != z) return false;
+        /* if building on slopes is allowed, there will be flattening foundation (to tile max z) */
+        if (GetTileMaxZ(tile) != z) return false;
 
-	return true;
+        return true;
 }
 
 
@@ -2306,15 +2635,15 @@ static inline bool CheckBuildHouseSameZ(TileIndex tile, int z, bool noslope)
  */
 static bool CheckFree2x2Area(TileIndex tile, int z, bool noslope)
 {
-	/* we need to check this tile too because we can be at different tile now */
-	if (!CheckBuildHouseSameZ(tile, z, noslope)) return false;
+        /* we need to check this tile too because we can be at different tile now */
+        if (!CheckBuildHouseSameZ(tile, z, noslope)) return false;
 
-	for (DiagDirection d = DIAGDIR_SE; d < DIAGDIR_END; d++) {
-		tile += TileOffsByDiagDir(d);
-		if (!CheckBuildHouseSameZ(tile, z, noslope)) return false;
-	}
+        for (DiagDirection d = DIAGDIR_SE; d < DIAGDIR_END; d++) {
+                tile += TileOffsByDiagDir(d);
+                if (!CheckBuildHouseSameZ(tile, z, noslope)) return false;
+        }
 
-	return true;
+        return true;
 }
 
 
@@ -2327,25 +2656,25 @@ static bool CheckFree2x2Area(TileIndex tile, int z, bool noslope)
  */
 static inline bool TownLayoutAllowsHouseHere(Town *t, TileIndex tile)
 {
-	/* Allow towns everywhere when we don't build roads */
-	if (!_settings_game.economy.allow_town_roads && !_generating_world) return true;
+        /* Allow towns everywhere when we don't build roads */
+        if (!_settings_game.economy.allow_town_roads && !_generating_world) return true;
 
-	TileIndexDiffC grid_pos = TileIndexToTileIndexDiffC(t->xy, tile);
+        TileIndexDiffC grid_pos = TileIndexToTileIndexDiffC(t->xy, tile);
 
-	switch (t->layout) {
-		case TL_2X2_GRID:
-			if ((grid_pos.x % 3) == 0 || (grid_pos.y % 3) == 0) return false;
-			break;
+        switch (t->layout) {
+                case TL_2X2_GRID:
+                        if ((grid_pos.x % 3) == 0 || (grid_pos.y % 3) == 0) return false;
+                        break;
 
-		case TL_3X3_GRID:
-			if ((grid_pos.x % 4) == 0 || (grid_pos.y % 4) == 0) return false;
-			break;
+                case TL_3X3_GRID:
+                        if ((grid_pos.x % 4) == 0 || (grid_pos.y % 4) == 0) return false;
+                        break;
 
-		default:
-			break;
-	}
+                default:
+                        break;
+        }
 
-	return true;
+        return true;
 }
 
 
@@ -2358,29 +2687,29 @@ static inline bool TownLayoutAllowsHouseHere(Town *t, TileIndex tile)
  */
 static inline bool TownLayoutAllows2x2HouseHere(Town *t, TileIndex tile)
 {
-	/* Allow towns everywhere when we don't build roads */
-	if (!_settings_game.economy.allow_town_roads && !_generating_world) return true;
+        /* Allow towns everywhere when we don't build roads */
+        if (!_settings_game.economy.allow_town_roads && !_generating_world) return true;
 
-	/* Compute relative position of tile. (Positive offsets are towards north) */
-	TileIndexDiffC grid_pos = TileIndexToTileIndexDiffC(t->xy, tile);
+        /* Compute relative position of tile. (Positive offsets are towards north) */
+        TileIndexDiffC grid_pos = TileIndexToTileIndexDiffC(t->xy, tile);
 
-	switch (t->layout) {
-		case TL_2X2_GRID:
-			grid_pos.x %= 3;
-			grid_pos.y %= 3;
-			if ((grid_pos.x != 2 && grid_pos.x != -1) ||
-				(grid_pos.y != 2 && grid_pos.y != -1)) return false;
-			break;
+        switch (t->layout) {
+                case TL_2X2_GRID:
+                        grid_pos.x %= 3;
+                        grid_pos.y %= 3;
+                        if ((grid_pos.x != 2 && grid_pos.x != -1) ||
+                                (grid_pos.y != 2 && grid_pos.y != -1)) return false;
+                        break;
 
-		case TL_3X3_GRID:
-			if ((grid_pos.x & 3) < 2 || (grid_pos.y & 3) < 2) return false;
-			break;
+                case TL_3X3_GRID:
+                        if ((grid_pos.x & 3) < 2 || (grid_pos.y & 3) < 2) return false;
+                        break;
 
-		default:
-			break;
-	}
+                default:
+                        break;
+        }
 
-	return true;
+        return true;
 }
 
 
@@ -2395,18 +2724,18 @@ static inline bool TownLayoutAllows2x2HouseHere(Town *t, TileIndex tile)
  */
 static bool CheckTownBuild2House(TileIndex *tile, Town *t, int maxz, bool noslope, DiagDirection second)
 {
-	/* 'tile' is already checked in BuildTownHouse() - CanBuildHouseHere() and slope test */
+        /* 'tile' is already checked in BuildTownHouse() - CanBuildHouseHere() and slope test */
 
-	TileIndex tile2 = *tile + TileOffsByDiagDir(second);
-	if (TownLayoutAllowsHouseHere(t, tile2) && CheckBuildHouseSameZ(tile2, maxz, noslope)) return true;
+        TileIndex tile2 = *tile + TileOffsByDiagDir(second);
+        if (TownLayoutAllowsHouseHere(t, tile2) && CheckBuildHouseSameZ(tile2, maxz, noslope)) return true;
 
-	tile2 = *tile + TileOffsByDiagDir(ReverseDiagDir(second));
-	if (TownLayoutAllowsHouseHere(t, tile2) && CheckBuildHouseSameZ(tile2, maxz, noslope)) {
-		*tile = tile2;
-		return true;
-	}
+        tile2 = *tile + TileOffsByDiagDir(ReverseDiagDir(second));
+        if (TownLayoutAllowsHouseHere(t, tile2) && CheckBuildHouseSameZ(tile2, maxz, noslope)) {
+                *tile = tile2;
+                return true;
+        }
 
-	return false;
+        return false;
 }
 
 
@@ -2420,18 +2749,18 @@ static bool CheckTownBuild2House(TileIndex *tile, Town *t, int maxz, bool noslop
  */
 static bool CheckTownBuild2x2House(TileIndex *tile, Town *t, int maxz, bool noslope)
 {
-	TileIndex tile2 = *tile;
+        TileIndex tile2 = *tile;
 
-	for (DiagDirection d = DIAGDIR_SE;; d++) { // 'd' goes through DIAGDIR_SE, DIAGDIR_SW, DIAGDIR_NW, DIAGDIR_END
-		if (TownLayoutAllows2x2HouseHere(t, tile2) && CheckFree2x2Area(tile2, maxz, noslope)) {
-			*tile = tile2;
-			return true;
-		}
-		if (d == DIAGDIR_END) break;
-		tile2 += TileOffsByDiagDir(ReverseDiagDir(d)); // go clockwise
-	}
+        for (DiagDirection d = DIAGDIR_SE;; d++) { // 'd' goes through DIAGDIR_SE, DIAGDIR_SW, DIAGDIR_NW, DIAGDIR_END
+                if (TownLayoutAllows2x2HouseHere(t, tile2) && CheckFree2x2Area(tile2, maxz, noslope)) {
+                        *tile = tile2;
+                        return true;
+                }
+                if (d == DIAGDIR_END) break;
+                tile2 += TileOffsByDiagDir(ReverseDiagDir(d)); // go clockwise
+        }
 
-	return false;
+        return false;
 }
 
 
@@ -2444,153 +2773,153 @@ static bool CheckTownBuild2x2House(TileIndex *tile, Town *t, int maxz, bool nosl
 static bool BuildTownHouse(Town *t, TileIndex tile)
 {
 	/* forbidden building here by town layout */
-	if (!TownLayoutAllowsHouseHere(t, tile)) return false;
+        if (!TownLayoutAllowsHouseHere(t, tile)) return false;
 
-	/* no house allowed at all, bail out */
-	if (!CanBuildHouseHere(tile, false)) return false;
+        /* no house allowed at all, bail out */
+        if (!CanBuildHouseHere(tile, false)) return false;
 
-	Slope slope = GetTileSlope(tile);
-	int maxz = GetTileMaxZ(tile);
+        Slope slope = GetTileSlope(tile);
+        int maxz = GetTileMaxZ(tile);
 
-	/* Get the town zone type of the current tile, as well as the climate.
-	 * This will allow to easily compare with the specs of the new house to build */
-	HouseZonesBits rad = GetTownRadiusGroup(t, tile);
+        /* Get the town zone type of the current tile, as well as the climate.
+         * This will allow to easily compare with the specs of the new house to build */
+        HouseZonesBits rad = GetTownRadiusGroup(t, tile);
 
-	/* Above snow? */
-	int land = _settings_game.game_creation.landscape;
-	if (land == LT_ARCTIC && maxz > HighestSnowLine()) land = -1;
+        /* Above snow? */
+        int land = _settings_game.game_creation.landscape;
+        if (land == LT_ARCTIC && maxz > HighestSnowLine()) land = -1;
 
-	uint bitmask = (1 << rad) + (1 << (land + 12));
+        uint bitmask = (1 << rad) + (1 << (land + 12));
 
-	/* bits 0-4 are used
-	 * bits 11-15 are used
-	 * bits 5-10 are not used. */
-	HouseID houses[NUM_HOUSES];
-	uint num = 0;
-	uint probs[NUM_HOUSES];
-	uint probability_max = 0;
+        /* bits 0-4 are used
+         * bits 11-15 are used
+         * bits 5-10 are not used. */
+        HouseID houses[NUM_HOUSES];
+        uint num = 0;
+        uint probs[NUM_HOUSES];
+        uint probability_max = 0;
 
-	/* Generate a list of all possible houses that can be built. */
-	for (uint i = 0; i < NUM_HOUSES; i++) {
-		const HouseSpec *hs = HouseSpec::Get(i);
+        /* Generate a list of all possible houses that can be built. */
+        for (uint i = 0; i < NUM_HOUSES; i++) {
+                const HouseSpec *hs = HouseSpec::Get(i);
 
-		/* Verify that the candidate house spec matches the current tile status */
-		if ((~hs->building_availability & bitmask) != 0 || !hs->enabled || hs->grf_prop.override != INVALID_HOUSE_ID) continue;
+                /* Verify that the candidate house spec matches the current tile status */
+                if ((~hs->building_availability & bitmask) != 0 || !hs->enabled || hs->grf_prop.override != INVALID_HOUSE_ID) continue;
 
-		/* Don't let these counters overflow. Global counters are 32bit, there will never be that many houses. */
-		if (hs->class_id != HOUSE_NO_CLASS) {
-			/* id_count is always <= class_count, so it doesn't need to be checked */
-			if (t->cache.building_counts.class_count[hs->class_id] == UINT16_MAX) continue;
-		} else {
-			/* If the house has no class, check id_count instead */
-			if (t->cache.building_counts.id_count[i] == UINT16_MAX) continue;
-		}
+                /* Don't let these counters overflow. Global counters are 32bit, there will never be that many houses. */
+                if (hs->class_id != HOUSE_NO_CLASS) {
+                        /* id_count is always <= class_count, so it doesn't need to be checked */
+                        if (t->cache.building_counts.class_count[hs->class_id] == UINT16_MAX) continue;
+                } else {
+                        /* If the house has no class, check id_count instead */
+                        if (t->cache.building_counts.id_count[i] == UINT16_MAX) continue;
+                }
 
-		/* Without NewHouses, all houses have probability '1' */
-		uint cur_prob = (_loaded_newgrf_features.has_newhouses ? hs->probability : 1);
-		probability_max += cur_prob;
-		probs[num] = cur_prob;
-		houses[num++] = (HouseID)i;
-	}
+                /* Without NewHouses, all houses have probability '1' */
+                uint cur_prob = (_loaded_newgrf_features.has_newhouses ? hs->probability : 1);
+                probability_max += cur_prob;
+                probs[num] = cur_prob;
+                houses[num++] = (HouseID)i;
+        }
 
-	TileIndex baseTile = tile;
+        TileIndex baseTile = tile;
 
-	while (probability_max > 0) {
-		/* Building a multitile building can change the location of tile.
-		 * The building would still be built partially on that tile, but
-		 * its northern tile would be elsewhere. However, if the callback
-		 * fails we would be basing further work from the changed tile.
-		 * So a next 1x1 tile building could be built on the wrong tile. */
-		tile = baseTile;
+        while (probability_max > 0) {
+                /* Building a multitile building can change the location of tile.
+                 * The building would still be built partially on that tile, but
+                 * its northern tile would be elsewhere. However, if the callback
+                 * fails we would be basing further work from the changed tile.
+                 * So a next 1x1 tile building could be built on the wrong tile. */
+                tile = baseTile;
 
-		uint r = RandomRange(probability_max);
-		uint i;
-		for (i = 0; i < num; i++) {
-			if (probs[i] > r) break;
-			r -= probs[i];
-		}
+                uint r = RandomRange(probability_max);
+                uint i;
+                for (i = 0; i < num; i++) {
+                        if (probs[i] > r) break;
+                        r -= probs[i];
+                }
 
-		HouseID house = houses[i];
-		probability_max -= probs[i];
+                HouseID house = houses[i];
+                probability_max -= probs[i];
+                /* remove tested house from the set */
+                num--;
+                houses[i] = houses[num];
+                probs[i] = probs[num];
 
-		/* remove tested house from the set */
-		num--;
-		houses[i] = houses[num];
-		probs[i] = probs[num];
+                const HouseSpec *hs = HouseSpec::Get(house);
 
-		const HouseSpec *hs = HouseSpec::Get(house);
+                if (_loaded_newgrf_features.has_newhouses && !_generating_world &&
+                                _game_mode != GM_EDITOR && (hs->extra_flags & BUILDING_IS_HISTORICAL) != 0) {
+                        continue;
+                }
 
-		if (_loaded_newgrf_features.has_newhouses && !_generating_world &&
-				_game_mode != GM_EDITOR && (hs->extra_flags & BUILDING_IS_HISTORICAL) != 0) {
-			continue;
-		}
+                if (_cur_year < hs->min_year || _cur_year > hs->max_year) continue;
 
-		if (_cur_year < hs->min_year || _cur_year > hs->max_year) continue;
+                /* Special houses that there can be only one of. */
+                uint oneof = 0;
 
-		/* Special houses that there can be only one of. */
-		uint oneof = 0;
+                if (hs->building_flags & BUILDING_IS_CHURCH) {
+                        SetBit(oneof, TOWN_HAS_CHURCH);
+                } else if (hs->building_flags & BUILDING_IS_STADIUM) {
+                        SetBit(oneof, TOWN_HAS_STADIUM);
+                }
 
-		if (hs->building_flags & BUILDING_IS_CHURCH) {
-			SetBit(oneof, TOWN_HAS_CHURCH);
-		} else if (hs->building_flags & BUILDING_IS_STADIUM) {
-			SetBit(oneof, TOWN_HAS_STADIUM);
-		}
+                if (t->flags & oneof) continue;
 
-		if (t->flags & oneof) continue;
+                /* Make sure there is no slope? */
+                bool noslope = (hs->building_flags & TILE_NOT_SLOPED) != 0;
+                if (noslope && slope != SLOPE_FLAT) continue;
 
-		/* Make sure there is no slope? */
-		bool noslope = (hs->building_flags & TILE_NOT_SLOPED) != 0;
-		if (noslope && slope != SLOPE_FLAT) continue;
+                if (hs->building_flags & TILE_SIZE_2x2) {
+                        if (!CheckTownBuild2x2House(&tile, t, maxz, noslope)) continue;
+                } else if (hs->building_flags & TILE_SIZE_2x1) {
+                        if (!CheckTownBuild2House(&tile, t, maxz, noslope, DIAGDIR_SW)) continue;
+                } else if (hs->building_flags & TILE_SIZE_1x2) {
+                        if (!CheckTownBuild2House(&tile, t, maxz, noslope, DIAGDIR_SE)) continue;
+                } else {
+                        /* 1x1 house checks are already done */
+                }
 
-		if (hs->building_flags & TILE_SIZE_2x2) {
-			if (!CheckTownBuild2x2House(&tile, t, maxz, noslope)) continue;
-		} else if (hs->building_flags & TILE_SIZE_2x1) {
-			if (!CheckTownBuild2House(&tile, t, maxz, noslope, DIAGDIR_SW)) continue;
-		} else if (hs->building_flags & TILE_SIZE_1x2) {
-			if (!CheckTownBuild2House(&tile, t, maxz, noslope, DIAGDIR_SE)) continue;
-		} else {
-			/* 1x1 house checks are already done */
-		}
+                byte random_bits = Random();
 
-		byte random_bits = Random();
+                if (HasBit(hs->callback_mask, CBM_HOUSE_ALLOW_CONSTRUCTION)) {
+                        uint16 callback_res = GetHouseCallback(CBID_HOUSE_ALLOW_CONSTRUCTION, 0, 0, house, t, tile, true, random_bits);
+                        if (callback_res != CALLBACK_FAILED && !Convert8bitBooleanCallback(hs->grf_prop.grffile, CBID_HOUSE_ALLOW_CONSTRUCTION, callback_res)) continue;
+                }
 
-		if (HasBit(hs->callback_mask, CBM_HOUSE_ALLOW_CONSTRUCTION)) {
-			uint16 callback_res = GetHouseCallback(CBID_HOUSE_ALLOW_CONSTRUCTION, 0, 0, house, t, tile, true, random_bits);
-			if (callback_res != CALLBACK_FAILED && !Convert8bitBooleanCallback(hs->grf_prop.grffile, CBID_HOUSE_ALLOW_CONSTRUCTION, callback_res)) continue;
-		}
+                /* build the house */
+                t->cache.num_houses++;
 
-		/* build the house */
-		t->cache.num_houses++;
+                /* Special houses that there can be only one of. */
+                t->flags |= oneof;
 
-		/* Special houses that there can be only one of. */
-		t->flags |= oneof;
+                byte construction_counter = 0;
+                byte construction_stage = 0;
 
-		byte construction_counter = 0;
-		byte construction_stage = 0;
+                if (_generating_world || _game_mode == GM_EDITOR) {
+                        uint32 r = Random();
 
-		if (_generating_world || _game_mode == GM_EDITOR) {
-			uint32 r = Random();
+                        construction_stage = TOWN_HOUSE_COMPLETED;
+                        if (Chance16(1, 7)) construction_stage = GB(r, 0, 2);
 
-			construction_stage = TOWN_HOUSE_COMPLETED;
-			if (Chance16(1, 7)) construction_stage = GB(r, 0, 2);
+                        if (construction_stage == TOWN_HOUSE_COMPLETED) {
+                                ChangePopulation(t, hs->population);
+                        } else {
+                                construction_counter = GB(r, 2, 2);
+                        }
+                }
 
-			if (construction_stage == TOWN_HOUSE_COMPLETED) {
-				ChangePopulation(t, hs->population);
-			} else {
-				construction_counter = GB(r, 2, 2);
-			}
-		}
+                MakeTownHouse(tile, t, construction_counter, construction_stage, house, random_bits);
+                UpdateTownRadius(t);
+                UpdateTownGrowthRate(t);
+                UpdateTownCargoes(t, tile);
 
-		MakeTownHouse(tile, t, construction_counter, construction_stage, house, random_bits);
-		UpdateTownRadius(t);
-		UpdateTownGrowthRate(t);
-		UpdateTownCargoes(t, tile);
+                return true;
+        }
 
-		return true;
-	}
-
-	return false;
+        return false;
 }
+
 
 /**
  * Update data structures when a house is removed
@@ -2613,23 +2942,24 @@ static void DoClearTownHouseHelper(TileIndex tile, Town *t, HouseID house)
  * The given ID is set to the ID of the north tile and the TileDiff to the north tile is returned.
  *
  * @param house Is changed to the HouseID of the north tile of the same house
+ * @param map Returned value will be related to this tile array
  * @return TileDiff from the tile of the given HouseID to the north tile
  */
-TileIndexDiff GetHouseNorthPart(HouseID &house)
+TileIndexDiff GetHouseNorthPart(HouseID &house, Map *map)
 {
 	if (house >= 3) { // house id 0,1,2 MUST be single tile houses, or this code breaks.
 		if (HouseSpec::Get(house - 1)->building_flags & TILE_SIZE_2x1) {
 			house--;
-			return TileDiffXY(-1, 0);
+			return TileDiffXY(-1, 0, map);
 		} else if (HouseSpec::Get(house - 1)->building_flags & BUILDING_2_TILES_Y) {
 			house--;
-			return TileDiffXY(0, -1);
+			return TileDiffXY(0, -1, map);
 		} else if (HouseSpec::Get(house - 2)->building_flags & BUILDING_HAS_4_TILES) {
 			house -= 2;
-			return TileDiffXY(-1, 0);
+			return TileDiffXY(-1, 0, map);
 		} else if (HouseSpec::Get(house - 3)->building_flags & BUILDING_HAS_4_TILES) {
 			house -= 3;
-			return TileDiffXY(-1, -1);
+			return TileDiffXY(-1, -1, map);
 		}
 	}
 	return 0;
@@ -3733,6 +4063,77 @@ static CommandCost TerraformTile_Town(TileIndex tile, DoCommandFlag flags, int z
 	return DoCommand(tile, 0, 0, flags, CMD_LANDSCAPE_CLEAR);
 }
 
+bool TestTownTileCopyability(GenericTileIndex tile, const GenericTileArea &src_area, CopyPasteMode mode, GenericTileArea *house_rect, TileContentPastePreview *preview = NULL)
+{
+	if (_game_mode != GM_EDITOR) return false;
+	if (!(mode & CPM_WITH_HOUSES)) return false;
+
+	HouseID type = GetHouseType(tile);
+	TileIndexDiff north_offset = GetHouseNorthPart(type, MapOf(tile)); // modifies the 'type'
+	BuildingFlags flags = HouseSpec::Get(type)->building_flags;
+	GenericTileArea ta(tile + north_offset, flags & BUILDING_2_TILES_X ? 2 : 1, flags & BUILDING_2_TILES_Y ? 2 : 1);
+	if (!src_area.Contains(ta)) return false;
+
+	if (house_rect != NULL) {
+		*house_rect = (tile == ta.tile) ? ta : GenericTileArea(GenericTileIndex(INVALID_TILE_INDEX, MapOf(tile)), 0, 0);
+	}
+
+	if (preview != NULL) preview->highlight_tile_rect = true;
+	return true;
+}
+
+void CopyPasteTile_Town(GenericTileIndex src_tile, GenericTileIndex dst_tile, const CopyPasteParams &copy_paste)
+{
+	HouseID type = GetHouseType(src_tile);
+
+	if (IsMainMapTile(dst_tile)) {
+		GenericTileArea src_rect;
+		if (!TestTownTileCopyability(src_tile, copy_paste.src_area, copy_paste.mode, &src_rect)) return;
+		if (!IsValidTileIndex(src_rect.tile)) return; // copy/paste this house only once (when at most northern tile)
+
+		/* transform the house */
+		if (copy_paste.transformation != DTR_IDENTITY) {
+			BuildingFlags flags = HouseSpec::Get(type)->building_flags;
+			if (flags & BUILDING_HAS_2_TILES) {
+				/* 2x1 and 1x2 houses can't be rotated by 90 degree etc. */
+				if (flags & (TILE_SIZE_2x1 | TILE_SIZE_1x2)) {
+					if (TransformAxis(AXIS_X, copy_paste.transformation) != AXIS_X) {
+						_current_pasting->CollectError(AsMainMapTile(dst_tile), STR_ERROR_INAPPLICABLE_TRANSFORMATION, STR_ERROR_CAN_T_BUILD_HOUSE_HERE);
+						return;
+					}
+				}
+				/* find out which destination tile is the most northern one */
+				dst_tile = TransformTileArea(src_rect, copy_paste.TileTransform(), MapOf(dst_tile)).tile;
+			}
+		}
+
+		/* terraform tiles if needed */
+		if ((copy_paste.mode & CPM_TERRAFORM_MASK) == CPM_TERRAFORM_MINIMAL) {
+			CopyPasteHeights(src_rect, copy_paste);
+		}
+	} else {
+		if (!TestTownTileCopyability(src_tile, copy_paste.src_area, copy_paste.mode, NULL)) return;
+	}
+
+	uint random_bits = GetHouseRandomBits(src_tile);
+
+	if (IsMainMapTile(dst_tile)) {
+		TileIndex t = AsMainMapTile(dst_tile);
+		const Town *town = CalcClosestTownFromTile(t);
+		if (town == NULL) {
+			_current_pasting->CollectError(t, STR_ERROR_MUST_FOUND_TOWN_FIRST, STR_ERROR_CAN_T_BUILD_HOUSE_HERE);
+		} else {
+			uint32 p1 = 0, p2 = 0;
+			SB(p1,  0, 16, type);
+			SB(p1, 16, 16, town->index);
+			SB(p2,  0,  8, random_bits);
+			_current_pasting->DoCommand(t, p1, p2, CMD_BUILD_HOUSE | CMD_MSG(STR_ERROR_CAN_T_BUILD_HOUSE_HERE));
+		}
+	} else {
+		MakeHouseTile(dst_tile, 0, 0, 0, type, random_bits);
+	}
+}
+
 /** Tile callback functions for a town */
 extern const TileTypeProcs _tile_type_town_procs = {
 	DrawTile_Town,           // draw_tile_proc
@@ -3749,6 +4150,7 @@ extern const TileTypeProcs _tile_type_town_procs = {
 	nullptr,                    // vehicle_enter_tile_proc
 	GetFoundation_Town,      // get_foundation_proc
 	TerraformTile_Town,      // terraform_tile_proc
+	CopyPasteTile_Town,      // copypaste_tile_proc
 };
 
 

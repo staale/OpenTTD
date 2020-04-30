@@ -10,38 +10,93 @@
 #ifndef MAP_FUNC_H
 #define MAP_FUNC_H
 
+#include "core/bitmath_func.hpp"
 #include "core/math_func.hpp"
+#include "core/geometry_type.hpp"
 #include "tile_type.h"
 #include "map_type.h"
 #include "direction_func.h"
 
-extern uint _map_tile_mask;
+extern MainMap _main_map;
 
 /**
  * 'Wraps' the given tile to it is within the map. It does
  * this by masking the 'high' bits of.
  * @param x the tile to 'wrap'
  */
-
-#define TILE_MASK(x) ((x) & _map_tile_mask)
-
-/**
- * Pointer to the tile-array.
- *
- * This variable points to the tile-array which contains the tiles of
- * the map.
- */
-extern Tile *_m;
-
-/**
- * Pointer to the extended tile-array.
- *
- * This variable points to the extended tile-array which contains the tiles
- * of the map.
- */
-extern TileExtended *_me;
+#define TILE_MASK(x) ((x) & _main_map.tile_mask)
 
 void AllocateMap(uint size_x, uint size_y);
+
+/**
+ * Get the tile map that is bounded to a given tile index.
+ * @param tile tile index of a tile
+ * @return always the main map
+ */
+static inline Map *MapOf(TileIndex tile)
+{
+	return &_main_map;
+}
+
+/**
+ * Get the tile map that is bounded to a given tile index.
+ * @param tile tile index of a tile
+ * @return the map that contains the tile
+ */
+static inline Map *MapOf(GenericTileIndex tile)
+{
+	return tile.map;
+}
+
+/**
+ * Access the "raw" value (offset into map array) of a given tile index.
+ * @param tile tile index to query
+ * @return reference to the "raw" value of the index
+ */
+inline RawTileIndex &IndexOf(TileIndex &tile)
+{
+	return tile;
+}
+
+/** @copydoc IndexOf(TileIndex&) */
+inline RawTileIndex IndexOf(const TileIndex &tile)
+{
+	return tile;
+}
+
+/** @copydoc IndexOf(TileIndex&) */
+inline RawTileIndex &IndexOf(GenericTileIndex &tile)
+{
+	return tile.index;
+}
+
+/** @copydoc IndexOf(TileIndex&) */
+inline RawTileIndex IndexOf(const GenericTileIndex &tile)
+{
+	return tile.index;
+}
+
+/**
+ * Get the data of a tile.
+ * @param tile index of the tile
+ * @return the tile data
+ */
+template <typename Tindex>
+static inline Tile *GetTile(const Tindex &tile)
+{
+	return &(MapOf(tile)->m[IndexOf(tile)]);
+}
+
+/**
+ * Get the extended data of a tile.
+ * @param tile index of the tile
+ * @return the extended tile data
+ */
+template <typename Tindex>
+static inline TileExtended *GetTileEx(const Tindex &tile)
+{
+	return &(MapOf(tile)->me[IndexOf(tile)]);
+}
 
 /**
  * Logarithm of the map size along the X side.
@@ -50,8 +105,7 @@ void AllocateMap(uint size_x, uint size_y);
  */
 static inline uint MapLogX()
 {
-	extern uint _map_log_x;
-	return _map_log_x;
+	return _main_map.log_x;
 }
 
 /**
@@ -61,56 +115,57 @@ static inline uint MapLogX()
  */
 static inline uint MapLogY()
 {
-	extern uint _map_log_y;
-	return _map_log_y;
+	return _main_map.log_y;
 }
 
 /**
- * Get the size of the map along the X
+ * Get the size of a map along the X
+ * @param map the map
  * @return the number of tiles along the X of the map
  */
-static inline uint MapSizeX()
+static inline uint MapSizeX(Map *map = &_main_map)
 {
-	extern uint _map_size_x;
-	return _map_size_x;
+	return map->size_x;
 }
 
 /**
- * Get the size of the map along the Y
+ * Get the size of a map along the Y
+ * @param map the map
  * @return the number of tiles along the Y of the map
  */
-static inline uint MapSizeY()
+static inline uint MapSizeY(Map *map = &_main_map)
 {
-	extern uint _map_size_y;
-	return _map_size_y;
+	return map->size_y;
 }
 
 /**
- * Get the size of the map
+ * Get the size of a map
+ * @param map the map
  * @return the number of tiles of the map
  */
-static inline uint MapSize()
+static inline uint MapSize(Map *map = &_main_map)
 {
-	extern uint _map_size;
-	return _map_size;
+	return map->size;
 }
 
 /**
- * Gets the maximum X coordinate within the map, including MP_VOID
+ * Gets the maximum X coordinate within a map, including MP_VOID
+ * @param map the map
  * @return the maximum X coordinate
  */
-static inline uint MapMaxX()
+static inline uint MapMaxX(Map *map = &_main_map)
 {
-	return MapSizeX() - 1;
+	return MapSizeX(map) - 1;
 }
 
 /**
- * Gets the maximum Y coordinate within the map, including MP_VOID
+ * Gets the maximum Y coordinate within a map, including MP_VOID
+ * @param map the map
  * @return the maximum Y coordinate
  */
-static inline uint MapMaxY()
+static inline uint MapMaxY(Map *map = &_main_map)
 {
-	return MapSizeY() - 1;
+	return MapSizeY(map) - 1;
 }
 
 /**
@@ -149,9 +204,108 @@ static inline uint ScaleByMapSize1D(uint n)
  * the resulting tileindex of the start tile applied
  * with this saved difference.
  *
- * @see TileDiffXY(int, int)
+ * @see TileDiffXY
  */
 typedef int32 TileIndexDiff;
+
+/**
+ * Test if a given tile index is a main map tile index.
+ * @param tile the tile index to test
+ * @return \c true if the index points to the main map, \c false otherwise
+ */
+template <typename Tindex>
+inline bool IsMainMapTile(const Tindex &tile)
+{
+	return MapOf(tile) == &_main_map;
+}
+
+/**
+ * Convert a given tile index to a main map tile index.
+ *
+ * @param tile the index to convert
+ * @return the converted index
+ *
+ * @pre IsMainMapTile(tile)
+ */
+template <typename Tindex>
+static inline TileIndex AsMainMapTile(const Tindex &tile)
+{
+	assert(IsMainMapTile(tile));
+	return (TileIndex)IndexOf(tile);
+}
+
+/**
+ * Test whether two tile indices point to the same tile map.
+ * @param a the first tile
+ * @param b the second tile
+ * @return MapOf(a) == MapOf(b)
+ */
+template <typename TindexA, typename TindexB>
+static inline bool IsSameMap(const TindexA &a, const TindexB &b)
+{
+	return MapOf(a) == MapOf(b);
+}
+
+/**
+ * Test if a given tile index points to an existing tile.
+ *
+ * @param tile the tile index
+ * @return whether we can access content of this tile
+ *
+ * @note the function returns \c true also for #MP_VOID tiles
+ * @see IsValidTile
+ * @see IsInnerTile
+ */
+template <typename Tindex>
+static inline bool IsValidTileIndex(const Tindex &tile)
+{
+	return MapOf(tile) != NULL && IndexOf(tile) < MapSize(MapOf(tile));
+}
+
+/**
+ * Create a tile index.
+ * @param index the index of the tile
+ * @param map the map of the tile
+ */
+template <bool Tgeneric>
+static typename TileIndexT<Tgeneric>::T MakeTileIndex(RawTileIndex index, Map *map);
+
+template <>
+inline TileIndex MakeTileIndex<false>(RawTileIndex index, Map *map)
+{
+	assert(map == &_main_map);
+	return (TileIndex)index;
+}
+
+template <>
+inline GenericTileIndex MakeTileIndex<true>(RawTileIndex index, Map *map)
+{
+	return GenericTileIndex(index, map);
+}
+
+/**
+ * Returns the tile index of a coordinate.
+ *
+ * @param x The x coordinate of the tile
+ * @param y The y coordinate of the tile
+ * @param map The map of the tile
+ * @return The tile index calculated by the coordinate
+ */
+template <bool Tgeneric>
+static typename TileIndexT<Tgeneric>::T TileXY(uint x, uint y, Map *map);
+
+template <>
+inline TileIndex TileXY<false>(uint x, uint y, Map *map)
+{
+	assert(map == &_main_map);
+	return (y << MapLogX()) + x;
+}
+
+template <>
+inline GenericTileIndex TileXY<true>(uint x, uint y, Map *map)
+{
+	return GenericTileIndex(y * MapSizeX(map) + x, map);
+}
 
 /**
  * Returns the TileIndex of a coordinate.
@@ -162,7 +316,20 @@ typedef int32 TileIndexDiff;
  */
 static inline TileIndex TileXY(uint x, uint y)
 {
-	return (y << MapLogX()) + x;
+	return TileXY<false>(x, y, &_main_map);
+}
+
+/**
+ * Returns the tile index of a coordinate.
+ *
+ * @param x The x coordinate of the tile
+ * @param y The y coordinate of the tile
+ * @param map The map of the tile
+ * @return The tile index calculated by the coordinate
+ */
+static inline GenericTileIndex TileXY(uint x, uint y, Map *map)
+{
+	return TileXY<true>(x, y, map);
 }
 
 /**
@@ -176,13 +343,13 @@ static inline TileIndex TileXY(uint x, uint y)
  * @return The resulting offset value of the given coordinate
  * @see ToTileIndexDiff(TileIndexDiffC)
  */
-static inline TileIndexDiff TileDiffXY(int x, int y)
+static inline TileIndexDiff TileDiffXY(int x, int y, Map *map = &_main_map)
 {
 	/* Multiplication gives much better optimization on MSVC than shifting.
 	 * 0 << shift isn't optimized to 0 properly.
 	 * Typically x and y are constants, and then this doesn't result
 	 * in any actual multiplication in the assembly code.. */
-	return (y * MapSizeX()) + x;
+	return (y * MapSizeX(map)) + x;
 }
 
 /**
@@ -202,9 +369,10 @@ static inline TileIndex TileVirtXY(uint x, uint y)
  * @param tile the tile to get the X component of
  * @return the X component
  */
-static inline uint TileX(TileIndex tile)
+template <typename Tindex>
+static inline uint TileX(const Tindex &tile)
 {
-	return tile & MapMaxX();
+	return IndexOf(tile) % MapSizeX(MapOf(tile));
 }
 
 /**
@@ -212,50 +380,114 @@ static inline uint TileX(TileIndex tile)
  * @param tile the tile to get the Y component of
  * @return the Y component
  */
-static inline uint TileY(TileIndex tile)
+template <typename Tindex>
+static inline uint TileY(const Tindex &tile)
 {
-	return tile >> MapLogX();
+	return IndexOf(tile) / MapSizeX(MapOf(tile));
+}
+
+/**
+ * Return the offset between two tiles from a TileIndexDiffC struct.
+ *
+ * This function works like #TileDiffXY and returns the
+ * difference between two tiles.
+ *
+ * @param tidc The coordinate of the offset as TileIndexDiffC
+ * @param map The map array of the tile
+ * @return The difference between two tiles.
+ *
+ * @see TileDiffXY
+ */
+template <bool Tgeneric>
+static TileIndexDiff ToTileIndexDiff(TileIndexDiffC tidc, Map *map);
+
+template <>
+inline TileIndexDiff ToTileIndexDiff<false>(TileIndexDiffC tidc, Map *map)
+{
+	assert(map == &_main_map);
+	return (tidc.y << MapLogX()) + tidc.x;
+}
+
+template <>
+inline TileIndexDiff ToTileIndexDiff<true>(TileIndexDiffC tidc, Map *map)
+{
+	return (tidc.y * MapSizeX(map)) + tidc.x;
 }
 
 /**
  * Return the offset between to tiles from a TileIndexDiffC struct.
  *
- * This function works like #TileDiffXY(int, int) and returns the
+ * This function works like #TileDiffXY and returns the
  * difference between two tiles.
  *
  * @param tidc The coordinate of the offset as TileIndexDiffC
  * @return The difference between two tiles.
- * @see TileDiffXY(int, int)
+ * @see TileDiffXY
  */
 static inline TileIndexDiff ToTileIndexDiff(TileIndexDiffC tidc)
 {
-	return (tidc.y << MapLogX()) + tidc.x;
+	return ToTileIndexDiff<false>(tidc, &_main_map);
+}
+
+/**
+ * Return the offset between two tiles from a TileIndexDiffC struct.
+ *
+ * This function works like #TileDiffXY and returns the
+ * difference between two tiles.
+ *
+ * @param tidc The coordinate of the offset as TileIndexDiffC
+ * @param map The map array of the tile
+ * @return The difference between two tiles.
+ *
+ * @see TileDiffXY
+ */
+static inline TileIndexDiff ToTileIndexDiff(TileIndexDiffC tidc, Map *map)
+{
+	return ToTileIndexDiff<true>(tidc, map);
 }
 
 
 #ifndef _DEBUG
 	/**
-	 * Adds to tiles together.
+	 * Adds a given offset to a tile.
 	 *
-	 * @param x One tile
-	 * @param y Another tile to add
-	 * @return The resulting tile(index)
+	 * @param tile The tile to add to
+	 * @param delta The offset to add
+	 * @return The resulting tile
 	 */
-	#define TILE_ADD(x, y) ((x) + (y))
+	#define TILE_ADD(tile, delta) ((tile) + (delta))
+
+	/**
+	 * Adds a given XY offset to a tile.
+	 *
+	 * @param tile The tile to add an offset on it
+	 * @param x The x offset to add to the tile
+	 * @param y The y offset to add to the tile
+	 * @return The resulting tile
+	 */
+	#define TILE_ADDXY(tile, x, y) ((tile) + TileDiffXY(x, y, MapOf(tile)))
 #else
 	extern TileIndex TileAdd(TileIndex tile, TileIndexDiff add,
 		const char *exp, const char *file, int line);
-	#define TILE_ADD(x, y) (TileAdd((x), (y), #x " + " #y, __FILE__, __LINE__))
-#endif
 
-/**
- * Adds a given offset to a tile.
- *
- * @param tile The tile to add an offset on it
- * @param x The x offset to add to the tile
- * @param y The y offset to add to the tile
- */
-#define TILE_ADDXY(tile, x, y) TILE_ADD(tile, TileDiffXY(x, y))
+	/**
+	 * Adds a given offset to a tile.
+	 *
+	 * @param tile The tile to add to
+	 * @param delta The offset to add
+	 * @return The resulting tile
+	 */
+	#define TILE_ADD(tile, delta) (TileAdd((tile), (delta), #tile " + " #delta, __FILE__, __LINE__))
+
+	GenericTileIndex TileAddXY(GenericTileIndex tile, int x, int y, const char *exp, const char *file, int line);
+
+	static inline TileIndex TileAddXY(TileIndex tile, int x, int y, const char *exp, const char *file, int line)
+	{
+		return AsMainMapTile(TileAddXY(GenericTileIndex(tile), x, y, exp, file, line));
+	}
+
+	#define TILE_ADDXY(tile, ...) TileAddXY((tile), __VA_ARGS__, #tile " + <" #__VA_ARGS__ ">", __FILE__, __LINE__)
+#endif
 
 TileIndex TileAddWrap(TileIndex tile, int addx, int addy);
 
@@ -323,6 +555,81 @@ static inline TileIndexDiffC TileIndexToTileIndexDiffC(TileIndex tile_a, TileInd
 	return difference;
 }
 
+/**
+ * Get the offset of transformed northern tile corner.
+ *
+ * When transforming a tile, it's nothern corner can move to other location.
+ * The function retuns difference (TileIndexDiffC) between new and old
+ * locations e.g. when rotating 90 degree left, northern corner becomes
+ * western and the difference is (1, 0).
+ *
+ * Scheme of a tile with corners and offsets: <tt><pre>
+ *               N  (0, 0)
+ *             /   \
+ *    (1, 0)  W     E  (0, 1)
+ *             \   /
+ *               S  (1, 1)
+ * </pre></tt>
+ *
+ * @param transformation The transformation.
+ * @return Offset to new location of northern corner.
+ *
+ * @see TileIndexTransformations
+ */
+static inline TileIndexDiffC TransformedNorthCornerDiffC(DirTransformation transformation)
+{
+	/* lookup tables (bit arrays)
+	 *                          N                   E                      S                     W                      E                        S                      W                        N   */
+	static const uint8 DIFF_X = 0 << DTR_IDENTITY | 0 << DTR_ROTATE_90_R | 1 << DTR_ROTATE_180 | 1 << DTR_ROTATE_90_L | 0 << DTR_REFLECT_NE_SW | 1 << DTR_REFLECT_W_E | 1 << DTR_REFLECT_NW_SE | 0 << DTR_REFLECT_N_S;
+	static const uint8 DIFF_Y = 0 << DTR_IDENTITY | 1 << DTR_ROTATE_90_R | 1 << DTR_ROTATE_180 | 0 << DTR_ROTATE_90_L | 1 << DTR_REFLECT_NE_SW | 1 << DTR_REFLECT_W_E | 0 << DTR_REFLECT_NW_SE | 0 << DTR_REFLECT_N_S;
+
+	assert(IsValidDirTransform(transformation));
+
+	TileIndexDiffC ret = { (int16)GB(DIFF_X, transformation, 1), (int16)GB(DIFF_Y, transformation, 1) };
+	return ret;
+}
+
+TileTransformation TransformationBetweenTiles(int from_x, int from_y, int to_x, int to_y, DirTransformation dtr);
+Point TransformTile(int x, int y, TileTransformation transformation);
+
+/**
+ * Create an invertion of a #TileTransformation.
+ *
+ * @param transformation Transformation to invert.
+ * @return The inverted transformation.
+ */
+static inline TileTransformation InvertTileTransformation(TileTransformation transformation)
+{
+	return TransformationBetweenTiles(transformation.offset.x, transformation.offset.y, 0, 0, InvertDirTransform(transformation.dtr));
+}
+
+/**
+ * Transform a tile index.
+ *
+ * @param tile The tile index to transform.
+ * @param transformation Transformation to perform.
+ * @param dst_map Destination map.
+ * @return The transformed tile index.
+ */
+template <typename Tindex>
+static inline GenericTileIndex TransformTile(const Tindex &tile, TileTransformation transformation, Map *dest_map)
+{
+	Point ret = TransformTile(TileX(tile), TileY(tile), transformation);
+	return TileXY(ret.x, ret.y, dest_map);
+}
+
+/**
+ * Transform a tile index.
+ *
+ * @param tile The tile index to transform.
+ * @param transformation Transformation to perform.
+ * @return The transformed tile index.
+ */
+static inline TileIndex TransformTile(TileIndex tile, TileTransformation transformation)
+{
+	return AsMainMapTile(TransformTile(tile, transformation, &_main_map));
+}
+
 /* Functions to calculate distances */
 uint DistanceManhattan(TileIndex, TileIndex); ///< also known as L1-Norm. Is the shortest distance one could go over diagonal tracks (or roads)
 uint DistanceSquare(TileIndex, TileIndex); ///< euclidian- or L2-Norm squared
@@ -335,15 +642,59 @@ uint DistanceFromEdgeDir(TileIndex, DiagDirection); ///< distance from the map e
  * Convert a DiagDirection to a TileIndexDiff
  *
  * @param dir The DiagDirection
+ * @param map The tile map (result will be valid only there)
+ * @return The resulting TileIndexDiff
+ *
+ * @see TileIndexDiffCByDiagDir
+ */
+template <bool Tgeneric>
+static inline TileIndexDiff TileOffsByDiagDir(DiagDirection dir, Map *map)
+{
+	extern const TileIndexDiffC _tileoffs_by_diagdir[DIAGDIR_END];
+
+	assert(IsValidDiagDirection(dir));
+	return ToTileIndexDiff<Tgeneric>(_tileoffs_by_diagdir[dir], map);
+}
+
+/**
+ * Convert a DiagDirection to a TileIndexDiff
+ *
+ * @param dir The DiagDirection
  * @return The resulting TileIndexDiff
  * @see TileIndexDiffCByDiagDir
  */
 static inline TileIndexDiff TileOffsByDiagDir(DiagDirection dir)
 {
-	extern const TileIndexDiffC _tileoffs_by_diagdir[DIAGDIR_END];
+	return TileOffsByDiagDir<false>(dir, &_main_map);
+}
 
-	assert(IsValidDiagDirection(dir));
-	return ToTileIndexDiff(_tileoffs_by_diagdir[dir]);
+/**
+ * Convert a DiagDirection to a TileIndexDiff
+ *
+ * @param dir The DiagDirection
+ * @param map The tile map (result will be valid only there)
+ * @return The resulting TileIndexDiff
+ * @see TileIndexDiffCByDiagDir
+ */
+static inline TileIndexDiff TileOffsByDiagDir(DiagDirection dir, Map *map)
+{
+	return TileOffsByDiagDir<true>(dir, map);
+}
+
+/**
+ * Convert a Direction to a TileIndexDiff.
+ *
+ * @param dir The direction to convert from
+ * @param map The tile map (result will be valid only there)
+ * @return The resulting TileIndexDiff
+ */
+template <bool Tgeneric>
+static inline TileIndexDiff TileOffsByDir(Direction dir, Map *map)
+{
+	extern const TileIndexDiffC _tileoffs_by_dir[DIR_END];
+
+	assert(IsValidDirection(dir));
+	return ToTileIndexDiff<Tgeneric>(_tileoffs_by_dir[dir], map);
 }
 
 /**
@@ -354,10 +705,19 @@ static inline TileIndexDiff TileOffsByDiagDir(DiagDirection dir)
  */
 static inline TileIndexDiff TileOffsByDir(Direction dir)
 {
-	extern const TileIndexDiffC _tileoffs_by_dir[DIR_END];
+	return TileOffsByDir<false>(dir, &_main_map);
+}
 
-	assert(IsValidDirection(dir));
-	return ToTileIndexDiff(_tileoffs_by_dir[dir]);
+/**
+ * Convert a Direction to a TileIndexDiff.
+ *
+ * @param dir The direction to convert from
+ * @param map The tile map (result will be valid only there)
+ * @return The resulting TileIndexDiff
+ */
+static inline TileIndexDiff TileOffsByDir(Direction dir, Map *map)
+{
+	return TileOffsByDir<true>(dir, map);
 }
 
 /**
@@ -379,9 +739,10 @@ static inline TileIndex TileAddByDir(TileIndex tile, Direction dir)
  * @param dir The direction in which we want to step
  * @return the moved tile
  */
-static inline TileIndex TileAddByDiagDir(TileIndex tile, DiagDirection dir)
+template <typename Tindex>
+static inline Tindex TileAddByDiagDir(const Tindex &tile, DiagDirection dir)
 {
-	return TILE_ADD(tile, TileOffsByDiagDir(dir));
+	return TILE_ADDXY(tile, TileIndexDiffCByDiagDir(dir).x, TileIndexDiffCByDiagDir(dir).y);
 }
 
 /**

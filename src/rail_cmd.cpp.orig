@@ -1,3 +1,5 @@
+/* $Id$ */
+
 /*
  * This file is part of OpenTTD.
  * OpenTTD is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, version 2.
@@ -570,14 +572,20 @@ CommandCost CmdBuildSingleRails(TileIndex tile, DoCommandFlag flags, uint32 p1, 
 			FALLTHROUGH;
 		}
 
+<<<<<<< ours
 		default:
 			break;
 	}
+=======
+		default: {
+			/* Will there be flat water on the lower halftile? */
+			bool water_ground = IsTileType(tile, MP_WATER) && IsSlopeWithOneCornerRaised(tileh);
+			bool docking = IsPossibleDockingTile(tile) && IsDockingTile(tile);
+>>>>>>> theirs
 
 	if (make_new_rail_tile) {
 		/* Will there be flat water on the lower halftile? */
 		bool water_ground = IsTileType(tile, MP_WATER) && IsSlopeWithOneCornerRaised(tileh);
-			bool docking = IsPossibleDockingTile(tile) && IsDockingTile(tile);
 
 		CommandCost ret = CheckRailSlope(tileh, trackbits, TRACK_BIT_NONE, tile);
 		if (ret.Failed()) return ret;
@@ -588,6 +596,7 @@ CommandCost CmdBuildSingleRails(TileIndex tile, DoCommandFlag flags, uint32 p1, 
 		cost.AddCost(ret);
 		currbits = TRACK_BIT_NONE; // the tile is clear now
 
+<<<<<<< ours
 		if (water_ground) {
 			cost.AddCost(-_price[PR_CLEAR_WATER]);
 			cost.AddCost(_price[PR_CLEAR_ROUGH]);
@@ -595,11 +604,23 @@ CommandCost CmdBuildSingleRails(TileIndex tile, DoCommandFlag flags, uint32 p1, 
 
 		if (flags & DC_EXEC) {
 			MakeRailNormal(tile, _current_company, trackbits, railtype);
+			if (water_ground) SetRailGroundType(tile, RAIL_GROUND_WATER);
+			uint pieces = CountBits(trackbits);
+			if (TracksOverlap(trackbits)) pieces *= pieces;
+			Company::Get(_current_company)->infrastructure.rail[railtype] += pieces;
+			DirtyCompanyInfrastructureWindows(_current_company);
+=======
+			if (flags & DC_EXEC) {
+				MakeRailNormal(tile, _current_company, trackbit, railtype);
 				if (water_ground) {
 					SetRailGroundType(tile, RAIL_GROUND_WATER);
 					SetDockingTile(tile, docking);
 				}
-			DirtyCompanyInfrastructureWindows(_current_company);
+				Company::Get(_current_company)->infrastructure.rail[railtype]++;
+				DirtyCompanyInfrastructureWindows(_current_company);
+			}
+			break;
+>>>>>>> theirs
 		}
 	}
 
@@ -1601,7 +1622,6 @@ CommandCost CmdConvertRail(TileIndex tile, DoCommandFlag flags, uint32 p1, uint3
 
 	CommandCost cost(EXPENSES_CONSTRUCTION);
 	CommandCost error = CommandCost(STR_ERROR_NO_SUITABLE_RAILROAD_TRACK); // by default, there is no track to convert.
-	bool found_convertible_track = false; // whether we actually did convert some track (see bug #7633)
 
 	TileIterator *iter = diagonal ? (TileIterator *)new DiagonalTileIterator(area_start, area_end) : new OrthogonalTileIterator(area_start, area_end);
 	for (; (tile = *iter) != INVALID_TILE; ++(*iter)) {
@@ -1697,7 +1717,6 @@ CommandCost CmdConvertRail(TileIndex tile, DoCommandFlag flags, uint32 p1, uint3
 							InvalidateWindowData(WC_VEHICLE_DEPOT, tile);
 							InvalidateWindowData(WC_BUILD_VEHICLE, tile);
 						}
-						found_convertible_track = true;
 						cost.AddCost(RailConvertCost(type, totype));
 						break;
 
@@ -1709,7 +1728,6 @@ CommandCost CmdConvertRail(TileIndex tile, DoCommandFlag flags, uint32 p1, uint3
 								YapfNotifyTrackLayoutChange(tile, RemoveFirstTrack(&tracks));
 							}
 						}
-						found_convertible_track = true;
 						cost.AddCost(RailConvertCost(type, totype) * CountBits(GetTrackBits(tile)));
 						break;
 				}
@@ -1772,7 +1790,6 @@ CommandCost CmdConvertRail(TileIndex tile, DoCommandFlag flags, uint32 p1, uint3
 					}
 				}
 
-				found_convertible_track = true;
 				cost.AddCost((GetTunnelBridgeLength(tile, endtile) + 2) * RailConvertCost(type, totype));
 				break;
 			}
@@ -1783,7 +1800,6 @@ CommandCost CmdConvertRail(TileIndex tile, DoCommandFlag flags, uint32 p1, uint3
 					YapfNotifyTrackLayoutChange(tile, track);
 				}
 
-				found_convertible_track = true;
 				cost.AddCost(RailConvertCost(type, totype));
 				break;
 		}
@@ -1801,7 +1817,7 @@ CommandCost CmdConvertRail(TileIndex tile, DoCommandFlag flags, uint32 p1, uint3
 	}
 
 	delete iter;
-	return found_convertible_track ? cost : error;
+	return (cost.GetCost() == 0) ? error : cost;
 }
 
 static CommandCost RemoveTrainDepot(TileIndex tile, DoCommandFlag flags)
@@ -2495,8 +2511,9 @@ static void DrawTile_Track(TileInfo *ti)
 			if (image != SPR_FLAT_GRASS_TILE) image += rti->GetRailtypeSpriteOffset();
 		}
 
-		/* Adjust ground tile for desert and snow. */
-		if (IsSnowRailGround(ti->tile)) {
+		/* adjust ground tile for desert
+		 * don't adjust for snow, because snow in depots looks weird */
+		if (IsSnowRailGround(ti->tile) && _settings_game.game_creation.landscape == LT_TROPIC) {
 			if (image != SPR_FLAT_GRASS_TILE) {
 				image += rti->snow_offset; // tile with tracks
 			} else {

@@ -13,6 +13,7 @@
 #include "tree_map.h"
 #include "viewport_func.h"
 #include "command_func.h"
+#include "copypaste_cmd.h"
 #include "town.h"
 #include "genworld.h"
 #include "clear_func.h"
@@ -796,6 +797,105 @@ static CommandCost TerraformTile_Trees(TileIndex tile, DoCommandFlag flags, int 
 	return DoCommand(tile, 0, 0, flags, CMD_LANDSCAPE_CLEAR);
 }
 
+extern const byte _clear_to_tree_ground[6] = {
+	TREE_GROUND_GRASS,       // CLEAR_GRASS
+	TREE_GROUND_ROUGH,       // CLEAR_ROUGH
+	TREE_GROUND_GRASS,       // CLEAR_ROCKS
+	TREE_GROUND_GRASS,       // CLEAR_FIELDS
+	TREE_GROUND_SNOW_DESERT, // CLEAR_SNOW
+	TREE_GROUND_SNOW_DESERT, // CLEAR_DESERT
+};
+
+void CopyPastePlaceTrees(GenericTileIndex tile, TreeType type, uint count, uint growth, TreeGround ground, uint density)
+{
+	if (IsMainMapTile(tile)) {
+		TileIndex t = AsMainMapTile(tile);
+		TileType tt = GetTileType(t);
+		switch (tt) {
+			case MP_TREES:
+				break;
+
+			case MP_CLEAR:
+				if (count == 0 || IsBridgeAbove(t)) {
+					/* only the ground */
+					ClearGround clear_ground, raw_clear_ground;
+					switch (ground) {
+						default:
+							clear_ground = CLEAR_GRASS;
+							raw_clear_ground = CLEAR_GRASS;
+							break;
+						case TREE_GROUND_ROUGH:
+							clear_ground = CLEAR_ROUGH;
+							raw_clear_ground = CLEAR_ROUGH;
+							break;
+						case TREE_GROUND_SNOW_DESERT:
+							clear_ground = (_settings_game.game_creation.landscape == LT_TROPIC) ? CLEAR_DESERT : CLEAR_SNOW;
+							raw_clear_ground = (_settings_game.game_creation.landscape == LT_TROPIC) ? CLEAR_DESERT : CLEAR_GRASS;
+							break;
+						case TREE_GROUND_ROUGH_SNOW:
+							clear_ground = CLEAR_SNOW;
+							raw_clear_ground = CLEAR_ROUGH;
+							break;
+					}
+					CopyPastePlaceClear(tile, clear_ground, raw_clear_ground, density);
+					return;
+				}
+
+				if (GetRawClearGround(t) == CLEAR_FIELDS || GetRawClearGround(t) == CLEAR_ROCKS) {
+					_current_pasting->DoCommand(t, 0, 0, CMD_LANDSCAPE_CLEAR | CMD_MSG(STR_ERROR_CAN_T_CLEAR_THIS_AREA));
+					if (_current_pasting->last_result.Failed()) return;
+					if (_current_pasting->dc_flags & DC_EXEC) SetClearDensity(t, 3);
+				}
+				/* FALLTHROUGH */
+			default:
+				if (count == 0) return;
+
+				/* plant trees on the tile */
+				if (CmdPlantTree(t, DC_NONE, type, t, NULL).GetErrorMessage() == STR_ERROR_TREE_WRONG_TERRAIN_FOR_TREE_TYPE) {
+					type = TREE_INVALID; // try different tree type
+				}
+				_current_pasting->DoCommand(t, type, t, CMD_PLANT_TREE | CMD_MSG(STR_ERROR_CAN_T_PLANT_TREE_HERE));
+				if (_current_pasting->last_result.Failed()) return;
+				count--; // one less tree to add
+
+				if (!(_current_pasting->dc_flags & DC_EXEC)) return;
+				SetTreeGrowth(t, growth);
+				break;
+		}
+
+		/* increase tree count */
+		count = min(count, 4 - GetTreeCount(t));
+		if (count > 0) {
+			if (_current_pasting->dc_flags & DC_EXEC) {
+				AddTreeCount(t, count);
+				MarkTileDirtyByTile(t);
+			}
+			_current_pasting->CollectCost(CommandCost(), t); // had_success
+		}
+
+		/* set the ground */
+		if (IsValidTreeGround(ground) && (ground != GetTreeGround(t) || density != GetTreeDensity(t))) {
+			if (_current_pasting->dc_flags & DC_EXEC) SetTreeGroundDensity(t, ground, density);
+			_current_pasting->CollectCost(CommandCost(), t); // had_success
+		}
+	} else {
+		MakeTree(tile, type, count - 1, growth, ground, density);
+	}
+}
+
+void CopyPasteTile_Trees(GenericTileIndex src_tile, GenericTileIndex dst_tile, const CopyPasteParams &copy_paste)
+{
+	if (_game_mode != GM_EDITOR) return;
+	if (!(copy_paste.mode & (CPM_WITH_TREES | CPM_WITH_GROUND))) return;
+
+	CopyPastePlaceTrees(dst_tile,
+			(copy_paste.mode & CPM_WITH_TREES) ? GetTreeType(src_tile) : TREE_INVALID,
+			(copy_paste.mode & CPM_WITH_TREES) ? GetTreeCount(src_tile) : 0,
+			(copy_paste.mode & CPM_WITH_TREES) ? GetTreeGrowth(src_tile) : 0,
+			(copy_paste.mode & CPM_WITH_GROUND) ? GetTreeGround(src_tile) : INVALID_TREE_GROUND,
+			(copy_paste.mode & CPM_WITH_GROUND) ? GetTreeDensity(src_tile) : 0);
+}
+
 
 extern const TileTypeProcs _tile_type_trees_procs = {
 	DrawTile_Trees,           // draw_tile_proc
@@ -812,4 +912,5 @@ extern const TileTypeProcs _tile_type_trees_procs = {
 	nullptr,                     // vehicle_enter_tile_proc
 	GetFoundation_Trees,      // get_foundation_proc
 	TerraformTile_Trees,      // terraform_tile_proc
+	CopyPasteTile_Trees,      // copypaste_tile_proc
 };
